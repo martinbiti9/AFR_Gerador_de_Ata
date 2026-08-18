@@ -1,0 +1,137 @@
+export interface AberturaData {
+  obraCodigo: string;
+  obraNome: string;
+  assunto: string;
+  servico: string;
+  fornecedor: string;
+  rm: string;
+  cot: string;
+}
+
+export interface TopicCard {
+  id: string;
+  title: string;
+  regraObra: string;
+  excecaoAdmitida: string;
+  pontoAtencao: string;
+  perguntaFornecedor: string;
+  source: string;
+}
+
+export interface AnalysisResult {
+  tipoFornecimento: string;
+  topics: TopicCard[];
+}
+
+export interface Divergence {
+  id: string;
+  description: string;
+  severity: 'BAIXA' | 'MEDIA' | 'ALTA';
+  source: string;
+}
+
+export interface FinalAtaData {
+  agreedItems: string[];
+  pendingItems: string[];
+  notes: string;
+}
+
+export interface AppState {
+  meetingId: string | null;
+  step: number;
+  abertura: AberturaData | null;
+  analysisResult: AnalysisResult | null;
+  divergences: Divergence[];
+  preAtaGenerated: boolean;
+  finalAtaText: string;
+  finalAtaData: FinalAtaData | null;
+  finalAtaGenerated: boolean;
+}
+
+export const INITIAL_STATE: AppState = {
+  meetingId: null,
+  step: 1,
+  abertura: null,
+  analysisResult: null,
+  divergences: [],
+  preAtaGenerated: false,
+  finalAtaText: '',
+  finalAtaData: null,
+  finalAtaGenerated: false,
+};
+
+export interface ModelStageConfig {
+  model: string;
+  temperature: number; // 0.0 - 2.0 (Criatividade)
+  topP: number; // 0.05 - 1.0 (TOP P)
+  maxOutputTokens: number; // 512 - 16384 (Tamanho de resposta)
+  thinkingBudget: number; // 0 (Desativado / Automático), ou > 0 (Raciocínio)
+}
+
+export interface AIModelsConfig {
+  checklistModel: string;
+  proposalModel: string;
+  preAtaModel: string;
+  finalAtaModel: string;
+  chatbotModel: string;
+  
+  checklistParams?: ModelStageConfig;
+  proposalParams?: ModelStageConfig;
+  preAtaParams?: ModelStageConfig;
+  finalAtaParams?: ModelStageConfig;
+  chatbotParams?: ModelStageConfig;
+}
+
+export interface CustomPromptsConfig {
+  checklistInstructions: string;
+  proposalInstructions: string;
+  preAtaInstructions: string;
+  finalAtaInstructions: string;
+  chatbotInstructions: string;
+}
+
+export interface DetectedSection {
+  title: string;
+  type: string;
+  description: string;
+  fields?: string[];
+}
+
+export interface TableSchema {
+  name: string;
+  columns: string[];
+  sampleRowTags: string[];
+}
+
+export interface TemplateConfig {
+  id?: string;
+  version: number;
+  name: string;
+  description: string;
+  companyName: string;
+  primaryColor?: string;
+  tableHeaderBg?: string;
+  fontFamily?: string;
+  preAtaIntro?: string;
+  standardClauses?: string;
+  signatures?: string;
+  createdAt: string;
+  docxBlobBase64?: string;
+  originalFileName?: string;
+  fileSizeBytes?: number;
+  detectedPlaceholders?: string[];
+  structureSummary?: string;
+  detectedSections?: DetectedSection[];
+  tableSchemas?: TableSchema[];
+  templateType?: string;
+  rawTextPreview?: string;
+}
+
+export interface AuditLog {
+  id: string;
+  timestamp: string;
+  level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG';
+  category: 'AI' | 'DOCX' | 'CHECKLIST' | 'PROPOSAL' | 'SYSTEM' | 'AUTH' | 'ADMIN';
+  message: string;
+  details?: any;
+}

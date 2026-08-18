@@ -1,0 +1,87 @@
+{
+  "entities": {
+    "Meeting": {
+      "title": "Meeting",
+      "description": "Dados da reunião, checklist, propostas, divergências e atas geradas",
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "obraCodigo": { "type": "string" },
+        "obraNome": { "type": "string" },
+        "assunto": { "type": "string" },
+        "fornecedor": { "type": "string" },
+        "servico": { "type": "string" },
+        "rm": { "type": "string" },
+        "cot": { "type": "string" },
+        "step": { "type": "number" },
+        "aiContext": { "type": "object" },
+        "aiDivergences": { "type": "array" },
+        "meetingTranscript": { "type": "string" },
+        "finalAtaData": { "type": "object" },
+        "sonnetAnalysis": { "type": "string" },
+        "status": { "type": "string" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "TemplateVersion": {
+      "title": "TemplateVersion",
+      "description": "Versões de template para geração de atas",
+      "type": "object",
+      "properties": {
+        "version": { "type": "number" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "companyName": { "type": "string" },
+        "primaryColor": { "type": "string" },
+        "tableHeaderBg": { "type": "string" },
+        "fontFamily": { "type": "string" },
+        "preAtaIntro": { "type": "string" },
+        "standardClauses": { "type": "string" },
+        "signatures": { "type": "string" },
+        "rawConfig": { "type": "string" },
+        "createdAt": { "type": "string" }
+      }
+    },
+    "SystemConfig": {
+      "title": "SystemConfig",
+      "description": "Configurações de modelos de IA e prompts personalizados",
+      "type": "object",
+      "properties": {
+        "models": { "type": "string" },
+        "prompts": { "type": "string" },
+        "updatedAt": { "type": "string" }
+      }
+    },
+    "AuditLog": {
+      "title": "AuditLog",
+      "description": "Logs de auditoria e operações de IA",
+      "type": "object",
+      "properties": {
+        "timestamp": { "type": "string" },
+        "level": { "type": "string" },
+        "category": { "type": "string" },
+        "message": { "type": "string" },
+        "details": { "type": "string" }
+      }
+    }
+  },
+  "firestore": {
+    "/meetings/{meetingId}": {
+      "schema": "Meeting",
+      "description": "Coleção de atas e reuniões salvas no histórico"
+    },
+    "/templates/{templateId}": {
+      "schema": "TemplateVersion",
+      "description": "Coleção de templates de Pré-Ata e Ata"
+    },
+    "/config/{configId}": {
+      "schema": "SystemConfig",
+      "description": "Coleção de configurações globais do sistema"
+    },
+    "/logs/{logId}": {
+      "schema": "AuditLog",
+      "description": "Coleção de logs de auditoria"
+    }
+  }
+}

@@ -1,0 +1,14 @@
+import { initializeApp } from "firebase/app";
+import { getFirestore } from "firebase/firestore";
+
+const firebaseConfig = {
+  projectId: "biti9-performevaluationsummary",
+  appId: "1:1007003515485:web:553f9f79017ff4677a2bb4",
+  apiKey: "AIzaSyAKNOuwGwpSSVSzLCvoXTFTDrhd-gvH3f8",
+  authDomain: "biti9-performevaluationsummary.firebaseapp.com",
+  storageBucket: "biti9-performevaluationsummary.firebasestorage.app",
+  messagingSenderId: "1007003515485",
+};
+
+const app = initializeApp(firebaseConfig);
+export const db = getFirestore(app, "ai-studio-495e4a2f-bc01-4197-9d3d-8b17577710a2");

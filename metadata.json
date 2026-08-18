@@ -1,0 +1,6 @@
+{
+  "name": "Agente de Atas - Suprimentos",
+  "description": "Agente inteligente para elaboração, conferência de checklist, divergências e geração de atas de compras com IA e Sonnet 5.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
