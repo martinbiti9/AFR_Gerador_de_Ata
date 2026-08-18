@@ -26,21 +26,25 @@
     },
     "TemplateVersion": {
       "title": "TemplateVersion",
-      "description": "Versões de template para geração de atas",
+      "description": "Versões de template DOCX com schema e chunks para geração determinística de atas",
       "type": "object",
       "properties": {
+        "id": { "type": "string" },
         "version": { "type": "number" },
         "name": { "type": "string" },
         "description": { "type": "string" },
         "companyName": { "type": "string" },
-        "primaryColor": { "type": "string" },
-        "tableHeaderBg": { "type": "string" },
-        "fontFamily": { "type": "string" },
-        "preAtaIntro": { "type": "string" },
-        "standardClauses": { "type": "string" },
-        "signatures": { "type": "string" },
-        "rawConfig": { "type": "string" },
-        "createdAt": { "type": "string" }
+        "docxBlobBase64": { "type": "string" },
+        "chunksCount": { "type": "number" },
+        "docxBlobChunks": { "type": "array" },
+        "schema": { "type": "object" },
+        "detectedPlaceholders": { "type": "array" },
+        "structureSummary": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "originalFileName": { "type": "string" },
+        "fileSizeBytes": { "type": "number" },
+        "createdAt": { "type": "string" },
+        "updatedAt": { "type": "string" }
       }
     },
     "SystemConfig": {

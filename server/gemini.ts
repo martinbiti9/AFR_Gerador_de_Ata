@@ -2,9 +2,11 @@ import { GoogleGenAI, Type, Schema, FunctionDeclaration } from '@google/genai';
 import { PDFParse } from 'pdf-parse';
 import * as xlsx from 'xlsx';
 import * as mammoth from 'mammoth';
-import { getActiveModels, getActivePrompts, getActiveTemplate, ModelStageConfig } from './configStore';
+import { getActiveModels, getActivePrompts, ModelStageConfig } from './configStore';
+import { getActiveTemplateFromDb } from './templateRepository';
 import { getMeetingsFromStore, getMeetingById, MeetingEntity } from './meetingStore';
 import { addLog } from './logger';
+import { FinalAtaValidationSchema } from './types/template';
 
 let ai: GoogleGenAI | null = null;
 function getAI() {
@@ -187,12 +189,14 @@ export async function analyzeChecklist(files: Express.Multer.File[], customInstr
 
   const contents = await Promise.all(files.map(extractTextFromFile));
   const fullText = contents.join('\n\n====================\n\n');
-  const activeTemplate = getActiveTemplate();
-  const templatePlaceholders = activeTemplate.detectedPlaceholders?.join(', ') || 'obraCodigo, fornecedor, topics, divergences, agreedItems, pendingItems';
+  const activeTemplate = await getActiveTemplateFromDb();
+  const templateName = activeTemplate?.name || 'Ata Padrão de Suprimentos';
+  const templateVersion = activeTemplate?.version || 1;
+  const templatePlaceholders = activeTemplate?.detectedPlaceholders?.join(', ') || 'obraCodigo, obraNome, fornecedor, servico, assunto, rm, cot, topics, divergences, agreedItems, pendingItems';
 
   const prompt = `Você é um Agente de Atas de Compras de uma construtora.
 Abaixo estão os textos extraídos de arquivos PDF e Excel do Check List da obra.
-O documento final utilizará o template DOCX ativo ("${activeTemplate.name}", v${activeTemplate.version}).
+O documento final utilizará o template DOCX ativo ("${templateName}", v${templateVersion}).
 Campos identificados no template de ata: [${templatePlaceholders}].
 
 Sua tarefa é:
@@ -279,12 +283,13 @@ export async function analyzeProposal(files: Express.Multer.File[], checklist: a
 
   const contents = await Promise.all(files.map(extractTextFromFile));
   const fullText = contents.join('\n\n====================\n\n');
-  const activeTemplate = getActiveTemplate();
+  const activeTemplate = await getActiveTemplateFromDb();
+  const templateName = activeTemplate?.name || 'Ata Padrão de Suprimentos';
 
   const prompt = `Você é um Agente de Atas de Compras de uma construtora.
 Abaixo estão os textos extraídos da proposta do fornecedor e complementos.
 Também forneço a "Análise de Aderência" gerada anteriormente no formato JSON.
-O objetivo é extrair divergências e condições comerciais para preencher a seção de divergências e pontos de negociação ({divergences}) do template DOCX ativo ("${activeTemplate.name}").
+O objetivo é extrair divergências e condições comerciais para preencher a seção de divergências e pontos de negociação ({divergences}) do template DOCX ativo ("${templateName}").
 Sua tarefa é comparar a proposta com a Análise de Aderência e listar todas as divergências.
 Para cada divergência, dê a descrição, a severidade (BAIXA, MEDIA, ALTA) e a origem na proposta.
 IMPORTANTE: Não invente dados. Seja estrito.
@@ -371,11 +376,13 @@ export async function generateFinalAta(abertura: any, analysisResult: any, diver
     transcriptLength: transcript.length
   });
 
-  const activeTemplate = getActiveTemplate();
-  const templateFields = activeTemplate.detectedPlaceholders?.join(', ') || 'agreedItems, pendingItems, notes, signatures';
+  const activeTemplate = await getActiveTemplateFromDb();
+  const templateName = activeTemplate?.name || 'Ata Padrão de Suprimentos';
+  const templateVersion = activeTemplate?.version || 1;
+  const templateFields = activeTemplate?.detectedPlaceholders?.join(', ') || 'agreedItems, pendingItems, notes, signatures';
 
   const prompt = `Você é um Agente Especialista Sênior em Engenharia de Suprimentos e Auditoria Contratual para Construção Civil.
-Sua missão é estruturar os dados oficiais para preenchimento da Ata Final de Reunião no template DOCX ("${activeTemplate.name}", v${activeTemplate.version}).
+Sua missão é estruturar os dados oficiais para preenchimento da Ata Final de Reunião no template DOCX ("${templateName}", v${templateVersion}).
 
 VOCÊ DEVE OBRIGATORIAMENTE INTEGRAR E CRUZAR TODAS AS FONTES DE DADOS:
 1. CONTEXTO DO CHECKLIST (Análise de Aderência Técnica e Normativa do Caderno de Encargos - Etapa 2):
@@ -422,7 +429,14 @@ ${transcript}
     });
 
     const text = response.text || "{}";
-    const data = JSON.parse(text);
+    const rawData = JSON.parse(text);
+    const parsedData = FinalAtaValidationSchema.safeParse(rawData);
+
+    const data = parsedData.success ? parsedData.data : {
+      agreedItems: Array.isArray(rawData.agreedItems) ? rawData.agreedItems : [],
+      pendingItems: Array.isArray(rawData.pendingItems) ? rawData.pendingItems : [],
+      notes: typeof rawData.notes === 'string' ? rawData.notes : ''
+    };
 
     addLog('INFO', 'AI', 'Ata Final estruturada com sucesso pela IA', {
       agreedCount: data.agreedItems?.length || 0,

@@ -3,8 +3,9 @@ import { TemplateConfig } from '../../types';
 import { 
   FileText, Download, RotateCcw, UploadCloud, CheckCircle2, 
   AlertCircle, Clock, FileCode, Check, FileCheck, Info, X, Tag,
-  Layers, Table as TableIcon, Sparkles, HelpCircle, ChevronDown, ChevronUp
+  Layers, Table as TableIcon, Sparkles, HelpCircle, ChevronDown, ChevronUp, Play, Trash2
 } from 'lucide-react';
+import { SchemaEditorModal } from './SchemaEditorModal';
 
 interface Props {
   onRefreshLogs?: () => void;
@@ -19,6 +20,7 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
   const [errorMsg, setErrorMsg] = useState('');
   const [isUploading, setIsUploading] = useState(false);
   const [expandedDetailsId, setExpandedDetailsId] = useState<string | null>(null);
+  const [editingSchemaTemplate, setEditingSchemaTemplate] = useState<TemplateConfig | null>(null);
 
   // Form for new template version upload
   const [templateFile, setTemplateFile] = useState<File | null>(null);
@@ -27,6 +29,9 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
   const [companyName, setCompanyName] = useState('DEPARTAMENTO DE SUPRIMENTOS');
   const [isDragging, setIsDragging] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  const [templateToDelete, setTemplateToDelete] = useState<{ id: string; name: string; version: number } | null>(null);
+  const [isDeleting, setIsDeleting] = useState(false);
 
   const fetchTemplates = async () => {
     try {
@@ -93,10 +98,22 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
         method: 'POST',
         body: formData,
       });
-      const data = await res.json();
+      
+      const text = await res.text();
+      let data: any;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error(
+          !res.ok 
+            ? `Erro no servidor (${res.status}): Não foi possível processar o arquivo Word.`
+            : 'Formato de resposta inesperado do servidor.'
+        );
+      }
+
       if (!res.ok) throw new Error(data.error || 'Falha ao processar e salvar nova versão do template DOCX.');
 
-      setStatusMsg(`Versão v${data.template.version} do Template DOCX analisada e ativada com sucesso!`);
+      setStatusMsg(`Versão v${data.template.version} do Template DOCX analisada e salva no Firestore com sucesso!`);
       setIsUploading(false);
       setTemplateFile(null);
       setTemplateName('');
@@ -120,16 +137,57 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
       const res = await fetch(`/api/admin/templates/${targetId}/rollback`, {
         method: 'POST',
       });
-      const data = await res.json();
+      const text = await res.text();
+      let data: any;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error('Formato de resposta inválido.');
+      }
       if (!res.ok) throw new Error(data.error || 'Falha ao reverter template.');
 
-      setStatusMsg(`Template v${versionNum} definido como ativo.`);
+      setStatusMsg(`Template v${versionNum} definido como ativo no Firestore.`);
       await fetchTemplates();
       onRefreshLogs?.();
       setTimeout(() => setStatusMsg(''), 4000);
     } catch (err: any) {
       setErrorMsg(err.message || 'Erro ao ativar versão.');
     }
+  };
+
+  const confirmDeleteTemplate = async () => {
+    if (!templateToDelete) return;
+    const { id: targetId, name, version: versionNum } = templateToDelete;
+
+    try {
+      setIsDeleting(true);
+      setErrorMsg('');
+      const res = await fetch(`/api/admin/templates/${targetId}`, {
+        method: 'DELETE',
+      });
+      const text = await res.text();
+      let data: any;
+      try {
+        data = JSON.parse(text);
+      } catch {
+        throw new Error('Resposta do servidor em formato inválido ao excluir template.');
+      }
+      if (!res.ok) throw new Error(data.error || 'Falha ao excluir template.');
+
+      setStatusMsg(`Template v${versionNum} ("${name}") excluído com sucesso do Firestore!`);
+      setTemplateToDelete(null);
+      await fetchTemplates();
+      onRefreshLogs?.();
+      setTimeout(() => setStatusMsg(''), 4000);
+    } catch (err: any) {
+      setErrorMsg(err.message || 'Erro ao excluir template.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleDeleteTemplate = (targetId: string, name: string, versionNum: number) => {
+    setTemplateToDelete({ id: targetId, name, version: versionNum });
   };
 
   const handleDownload = (templateId: string) => {
@@ -143,22 +201,87 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
     return (
       <div className="flex items-center justify-center p-12 text-slate-500 text-xs">
         <div className="animate-spin rounded-full h-5 w-5 border-2 border-blue-600 border-t-transparent mr-2"></div>
-        Carregando gerenciador de templates dinâmicos...
+        Carregando templates do Firestore...
       </div>
     );
   }
 
   return (
     <div className="space-y-6">
+      {/* Schema Editor Modal */}
+      {editingSchemaTemplate && (
+        <SchemaEditorModal
+          template={editingSchemaTemplate}
+          isOpen={true}
+          onClose={() => setEditingSchemaTemplate(null)}
+          onSaved={() => {
+            fetchTemplates();
+            onRefreshLogs?.();
+          }}
+        />
+      )}
+
+      {/* Confirmation Modal for Template Deletion */}
+      {templateToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in duration-150">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-red-200 space-y-4 animate-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3 text-red-600">
+              <div className="p-2.5 bg-red-100 rounded-full">
+                <Trash2 size={24} />
+              </div>
+              <div>
+                <h4 className="text-base font-bold text-slate-900">Excluir Template</h4>
+                <p className="text-xs text-slate-500">Esta ação é permanente no banco de dados</p>
+              </div>
+            </div>
+
+            <div className="p-3 bg-slate-50 rounded-xl border border-slate-200 space-y-1">
+              <p className="text-xs font-bold text-slate-800">
+                Versão v{templateToDelete.version} - {templateToDelete.name}
+              </p>
+              <p className="text-[11px] text-slate-500">
+                O arquivo Word (.docx) correspondente será removido do Firestore e do armazenamento local.
+              </p>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-2">
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={() => setTemplateToDelete(null)}
+                className="px-4 py-2 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-lg uppercase tracking-tight transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                disabled={isDeleting}
+                onClick={confirmDeleteTemplate}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 disabled:bg-red-300 text-white rounded-lg text-xs font-bold uppercase tracking-tight shadow transition-colors flex items-center gap-1.5"
+              >
+                {isDeleting ? (
+                  <>Excluindo do Banco...</>
+                ) : (
+                  <>
+                    <Trash2 size={14} />
+                    Confirmar Exclusão
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header Info */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 border-b border-slate-200 pb-4">
         <div>
           <h3 className="text-base font-bold text-slate-800 flex items-center gap-2">
             <FileText className="text-blue-600" size={20} />
-            Gerenciamento de Templates DOCX Dinâmicos
+            Gerenciamento de Templates DOCX (Persistência no Firestore)
           </h3>
           <p className="text-xs text-slate-500 mt-0.5">
-            A estrutura do documento é 100% dinâmica e compreendida a partir do DOCX enviado. O sistema preserva todas as fontes, tabelas, cabeçalhos e estilos sem quebra visual.
+            Os templates são lidos diretamente do banco Firestore em cada geração. Todas as variáveis possuem validação estrita com schema tipado.
           </p>
         </div>
 
@@ -200,11 +323,11 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
                 Upload do Arquivo de Template DOCX
               </h4>
               <p className="text-xs text-slate-500 mt-0.5">
-                Envie o modelo oficial em formato Microsoft Word (.docx). A IA inspecionará a estrutura, tabelas e tags XML dinamicamente.
+                Envie o modelo oficial em formato Microsoft Word (.docx). A IA inspecionará a estrutura, tabelas e tags XML dinamicamente gerando o schema base.
               </p>
             </div>
             <span className="text-[11px] bg-blue-100 text-blue-800 px-2.5 py-1 rounded font-bold uppercase">
-              Estrutura Dinâmica
+              Firestore Persisted
             </span>
           </div>
 
@@ -242,7 +365,7 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
                 <div className="text-center">
                   <p className="text-sm font-bold text-slate-800">{templateFile.name}</p>
                   <p className="text-xs text-slate-500 mt-0.5">
-                    {(templateFile.size / 1024).toFixed(1)} KB • Arquivo DOCX pronto para análise
+                    {(templateFile.size / 1024).toFixed(1)} KB • Arquivo DOCX pronto para análise e persistência
                   </p>
                 </div>
                 <button
@@ -321,7 +444,7 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
               className="px-6 py-2 bg-blue-600 hover:bg-blue-700 disabled:bg-blue-300 text-white rounded-lg text-xs font-bold uppercase tracking-tight shadow transition-colors flex items-center gap-1.5"
             >
               {savingNew ? (
-                <>Analisando Estrutura com IA e Salvando...</>
+                <>Analisando Estrutura e Gravando no Firestore...</>
               ) : (
                 <>
                   <Check size={15} />
@@ -333,14 +456,14 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
         </form>
       )}
 
-      {/* Histórico das 3 Últimas Versões com Rollback e Download */}
+      {/* Histórico das Versões com Schema, Rollback e Download */}
       <div className="bg-slate-50 rounded-xl p-5 border border-slate-200 space-y-4">
         <div className="flex items-center justify-between">
           <h4 className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-2">
             <Clock size={15} className="text-slate-500" />
-            Templates Cadastrados no Banco de Dados (Histórico de Versões)
+            Templates Cadastrados no Banco de Dados (Firestore)
           </h4>
-          <span className="text-[10px] text-slate-400 font-medium">Até 3 versões persistidas</span>
+          <span className="text-[10px] text-slate-400 font-medium">Persistência permanente</span>
         </div>
 
         {versions.length === 0 ? (
@@ -363,7 +486,6 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {last3Versions.map((v) => {
               const isActive = v.id === activeId;
-              const isExpanded = expandedDetailsId === v.id;
 
               return (
                 <div
@@ -409,28 +531,6 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
                       </div>
                     )}
 
-                    {/* Detected sections preview if present */}
-                    {v.detectedSections && v.detectedSections.length > 0 && (
-                      <div className="mb-3 p-2 bg-blue-50/50 rounded border border-blue-100 text-[10px] space-y-1">
-                        <p className="font-bold text-blue-900 flex items-center gap-1 uppercase text-[9px]">
-                          <Layers size={10} className="text-blue-600" />
-                          {v.detectedSections.length} Seções Identificadas:
-                        </p>
-                        <ul className="list-disc list-inside text-slate-600 space-y-0.5">
-                          {v.detectedSections.slice(0, 3).map((s, idx) => (
-                            <li key={idx} className="truncate">
-                              <strong>{s.title}</strong>: {s.description}
-                            </li>
-                          ))}
-                          {v.detectedSections.length > 3 && (
-                            <li className="text-slate-400 font-italic">
-                              + {v.detectedSections.length - 3} outras seções
-                            </li>
-                          )}
-                        </ul>
-                      </div>
-                    )}
-
                     <div className="text-[10px] text-slate-400 space-y-1 mb-4 border-t border-slate-100 pt-2">
                       <p><strong>Empresa:</strong> {v.companyName}</p>
                       {v.fileSizeBytes && (
@@ -441,26 +541,45 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
                     </div>
                   </div>
 
-                  <div className="flex items-center gap-2 pt-1">
+                  <div className="space-y-2 pt-1 border-t border-slate-100">
                     <button
-                      onClick={() => handleDownload(v.id || '')}
-                      className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold rounded transition-colors"
-                      title="Baixar arquivo .DOCX deste template"
+                      type="button"
+                      onClick={() => setEditingSchemaTemplate(v)}
+                      className="w-full flex items-center justify-center gap-1.5 py-1.5 px-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-bold rounded transition-colors border border-indigo-200"
                     >
-                      <Download size={13} />
-                      Download .DOCX
+                      <FileCode size={13} />
+                      Editar Schema & Testar
                     </button>
 
-                    {!isActive && (
+                    <div className="flex items-center gap-2">
                       <button
-                        onClick={() => handleRollback(v.id || '', v.version)}
-                        className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 text-[11px] font-bold rounded transition-colors"
-                        title="Ativar esta versão como padrão"
+                        onClick={() => handleDownload(v.id || '')}
+                        className="flex-1 flex items-center justify-center gap-1 py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold rounded transition-colors"
+                        title="Baixar arquivo .DOCX deste template"
                       >
-                        <RotateCcw size={13} />
-                        Ativar
+                        <Download size={13} />
+                        Download
                       </button>
-                    )}
+
+                      {!isActive && (
+                        <button
+                          onClick={() => handleRollback(v.id || '', v.version)}
+                          className="flex-1 flex items-center justify-center gap-1 py-1.5 px-2 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 text-[11px] font-bold rounded transition-colors"
+                          title="Ativar esta versão como padrão"
+                        >
+                          <RotateCcw size={13} />
+                          Ativar
+                        </button>
+                      )}
+
+                      <button
+                        onClick={() => handleDeleteTemplate(v.id || '', v.name, v.version)}
+                        className="p-1.5 bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 hover:text-red-700 rounded transition-colors"
+                        title="Excluir este template do banco de dados"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
                   </div>
                 </div>
               );
@@ -476,7 +595,7 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
           Como Funciona o Preenchimento Dinâmico de Templates DOCX
         </h4>
         <p className="text-xs text-indigo-900 leading-relaxed">
-          O motor de geração utiliza a biblioteca <strong>Docxtemplater + PizZip</strong> com normalização de XML runs. Não há layouts pré-definidos no código: ao enviar qualquer arquivo Word (.docx), a estrutura, tabelas, formatação, cabeçalhos e rodapés são 100% mantidos. O sistema mapeia os dados para as tags presentes no seu arquivo:
+          O motor de geração utiliza a biblioteca <strong>Docxtemplater + PizZip</strong> com normalização de XML runs e validação de schema. Os dados do checklist, propostas comerciais e transcrições de reunião são reconciliados de forma determinística antes da inserção no DOCX.
         </p>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">

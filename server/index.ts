@@ -7,11 +7,22 @@ import {
   analyzeProposal, 
   generateFinalAta, 
   extractTextFromFile, 
-  processChat,
+  processChat, 
   extractMetadataFromDocs,
   analyzeUploadedDocxStructureWithAI
 } from './gemini';
-import { generatePreAtaDocx, generateFinalAtaDocx, parseDocxTemplate } from './docx';
+import { parseDocxTemplate } from './docx';
+import { renderAtaDocument, RenderValidationError } from './render/renderAta';
+import {
+  getTemplateVersionsFromDb,
+  saveTemplateDocumentToDb,
+  rollbackTemplateInDb,
+  updateTemplateSchemaInDb,
+  deleteTemplateFromDb,
+  getActiveTemplateFromDb,
+  buildDefaultSchema
+} from './templateRepository';
+import { TemplateSchemaZod } from './types/template';
 import { addLog, getLogs, clearLogs } from './logger';
 import {
   saveMeetingToStore,
@@ -23,11 +34,7 @@ import {
   getActiveModels,
   updateActiveModels,
   getActivePrompts,
-  updateActivePrompts,
-  getTemplateVersions,
-  createNewTemplateVersion,
-  rollbackTemplate,
-  getActiveTemplate
+  updateActivePrompts
 } from './configStore';
 
 const upload = multer({ 
@@ -45,7 +52,7 @@ async function startServer() {
   app.use(express.json({ limit: '100mb' }));
   app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
-  // API Endpoints
+  // ================= EXTRACTION & AI PIPELINE =================
   
   app.post('/api/extract-metadata', upload.array('files'), async (req, res) => {
     try {
@@ -97,20 +104,6 @@ async function startServer() {
     }
   });
 
-  app.post('/api/generate-pre-ata', async (req, res) => {
-    try {
-      const { abertura, analysisResult, divergences } = req.body;
-      const buffer = await generatePreAtaDocx(abertura, analysisResult, divergences);
-      
-      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
-      res.setHeader('Content-Disposition', 'attachment; filename=Pre-Ata.docx');
-      res.send(buffer);
-    } catch (error: any) {
-      console.error('Error generating pre-ata:', error);
-      res.status(500).json({ error: error.message || 'Erro ao gerar Pré-Ata.' });
-    }
-  });
-
   app.post('/api/draft-final-ata', async (req, res) => {
     try {
       const { abertura, analysisResult, divergences, transcript, customInstructions } = req.body;
@@ -119,6 +112,29 @@ async function startServer() {
     } catch (error: any) {
       console.error('Error drafting final ata:', error);
       res.status(500).json({ error: error.message || 'Erro ao rascunhar Ata Final.' });
+    }
+  });
+
+  // ================= DETERMINISTIC DOCUMENT GENERATION =================
+
+  app.post('/api/generate-pre-ata', async (req, res) => {
+    try {
+      const { abertura, analysisResult, divergences } = req.body;
+      const { buffer, report } = await renderAtaDocument(abertura, analysisResult, divergences, null, '', true);
+      
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+      res.setHeader('Content-Disposition', 'attachment; filename=Pre-Ata.docx');
+      res.setHeader('X-Document-Verified', report.isVerified ? 'true' : 'false');
+      res.send(buffer);
+    } catch (error: any) {
+      if (error instanceof RenderValidationError) {
+        return res.status(422).json({
+          error: error.message,
+          missingFields: error.missingFields
+        });
+      }
+      console.error('Error generating pre-ata:', error);
+      res.status(500).json({ error: error.message || 'Erro ao gerar Pré-Ata.' });
     }
   });
 
@@ -131,12 +147,19 @@ async function startServer() {
         ataData = await generateFinalAta(abertura, analysisResult, divergences, transcript, customInstructions);
       }
 
-      const buffer = await generateFinalAtaDocx(abertura, analysisResult, divergences, ataData);
+      const { buffer, report } = await renderAtaDocument(abertura, analysisResult, divergences, ataData, transcript, false);
       
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
       res.setHeader('Content-Disposition', 'attachment; filename=Ata-Final.docx');
+      res.setHeader('X-Document-Verified', report.isVerified ? 'true' : 'false');
       res.send(buffer);
     } catch (error: any) {
+      if (error instanceof RenderValidationError) {
+        return res.status(422).json({
+          error: error.message,
+          missingFields: error.missingFields
+        });
+      }
       console.error('Error generating final ata:', error);
       res.status(500).json({ error: error.message || 'Erro ao gerar Ata Final.' });
     }
@@ -272,10 +295,14 @@ async function startServer() {
     res.json({ success: true, message: 'Logs limpos com sucesso.' });
   });
 
-  // 3. Templates & Versioning (DOCX Upload, Inspection, Rollback & Download)
-  app.get('/api/admin/templates', (req, res) => {
-    const data = getTemplateVersions();
-    res.json(data);
+  // 3. Firestore Templates & Schemas Management
+  app.get('/api/admin/templates', async (req, res) => {
+    try {
+      const data = await getTemplateVersionsFromDb();
+      res.json(data);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
   });
 
   app.post('/api/admin/templates', upload.single('templateFile'), async (req, res) => {
@@ -352,8 +379,10 @@ async function startServer() {
       }
 
       const templateName = name || (originalFileName ? originalFileName.replace(/\.docx$/i, '') : 'Template Personalizado');
+      const tempId = `template-${Date.now()}`;
+      const generatedSchema = buildDefaultSchema(tempId, detectedPlaceholders || []);
 
-      const newTemplate = createNewTemplateVersion({
+      const saved = await saveTemplateDocumentToDb({
         name: templateName,
         description: description || (structureSummary ? `Template DOCX: ${structureSummary}` : ''),
         companyName: inferredCompanyName || 'DEPARTAMENTO DE SUPRIMENTOS',
@@ -371,28 +400,108 @@ async function startServer() {
         detectedSections,
         tableSchemas,
         templateType,
-        rawTextPreview
+        rawTextPreview,
+        schema: generatedSchema
       });
 
-      res.json({ success: true, template: newTemplate });
+      res.json({ success: true, template: saved });
     } catch (error: any) {
       console.error('Error creating template version:', error);
       res.status(500).json({ error: error.message });
     }
   });
 
-  app.post('/api/admin/templates/:id/rollback', (req, res) => {
+  // Schema Editor Endpoint
+  app.put('/api/admin/templates/:id/schema', async (req, res) => {
     try {
-      const template = rollbackTemplate(req.params.id);
+      const parsedSchema = TemplateSchemaZod.safeParse(req.body.schema);
+      if (!parsedSchema.success) {
+        return res.status(400).json({
+          error: 'Schema inválido',
+          details: parsedSchema.error.format()
+        });
+      }
+
+      const rawSchemaData = parsedSchema.data;
+      const schemaToSave: any = {
+        ...rawSchemaData,
+        createdAt: rawSchemaData.createdAt || new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        generatedBy: rawSchemaData.generatedBy || 'admin'
+      };
+
+      const updated = await updateTemplateSchemaInDb(req.params.id, schemaToSave);
+      res.json({ success: true, template: updated });
+    } catch (error: any) {
+      console.error('Error updating template schema:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Test Render Endpoint
+  app.post('/api/admin/templates/:id/test-render', async (req, res) => {
+    try {
+      const dummyAbertura = {
+        obraCodigo: 'OBRA-0099',
+        obraNome: 'Empreendimento Teste de Verificação',
+        fornecedor: 'FORNECEDOR CERTIFICADO LTDA',
+        assunto: 'Reunião de Alinhamento Técnico',
+        servico: 'Estruturas e Fundações',
+        rm: 'RM-001',
+        cot: 'COT-001'
+      };
+      const dummyAnalysis = {
+        topics: [
+          { title: 'Prazo de Entrega', regraObra: 'Conforme cronograma', pontoAtencao: 'Atenção aos feriados' }
+        ]
+      };
+      const dummyDivergences = [
+        { description: 'Condição comercial ajustada em mesa', severity: 'MEDIA', source: 'Proposta' }
+      ];
+      const dummyFinal = {
+        agreedItems: ['Mobilização em 5 dias corridos', 'Apresentação de ART em 48h'],
+        pendingItems: ['Envio da lista final de colaboradores'],
+        notes: 'Simulação de renderização para validação de schema e tags do template.'
+      };
+
+      const { buffer, report } = await renderAtaDocument(dummyAbertura, dummyAnalysis, dummyDivergences, dummyFinal, '', false);
+
+      res.json({
+        success: true,
+        report,
+        fileSizeBytes: buffer.length
+      });
+    } catch (error: any) {
+      res.status(500).json({
+        success: false,
+        error: error.message
+      });
+    }
+  });
+
+  app.post('/api/admin/templates/:id/rollback', async (req, res) => {
+    try {
+      const template = await rollbackTemplateInDb(req.params.id);
       res.json({ success: true, template });
     } catch (error: any) {
       res.status(404).json({ error: error.message });
     }
   });
 
-  app.get('/api/admin/templates/:id/download', (req, res) => {
+  app.delete('/api/admin/templates/:id', async (req, res) => {
     try {
-      const { versions } = getTemplateVersions();
+      const { id } = req.params;
+      const result = await deleteTemplateFromDb(id);
+      res.json({ success: true, result });
+    } catch (error: any) {
+      console.error('Error deleting template:', error);
+      res.status(500).json({ error: error.message || 'Erro ao excluir template.' });
+    }
+  });
+
+  app.get('/api/admin/templates/:id/download', async (req, res) => {
+    try {
+      const { versions } = await getTemplateVersionsFromDb();
       const target = versions.find(v => v.id === req.params.id);
       if (!target) {
         return res.status(404).json({ error: 'Template não encontrado.' });

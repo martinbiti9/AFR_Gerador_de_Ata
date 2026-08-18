@@ -46,6 +46,7 @@ export interface AppState {
   finalAtaText: string;
   finalAtaData: FinalAtaData | null;
   finalAtaGenerated: boolean;
+  sonnetAnalysis?: string;
 }
 
 export const INITIAL_STATE: AppState = {
@@ -58,6 +59,7 @@ export const INITIAL_STATE: AppState = {
   finalAtaText: '',
   finalAtaData: null,
   finalAtaGenerated: false,
+  sonnetAnalysis: '',
 };
 
 export interface ModelStageConfig {
@@ -74,6 +76,7 @@ export interface AIModelsConfig {
   preAtaModel: string;
   finalAtaModel: string;
   chatbotModel: string;
+  sonnetModel?: string;
   
   checklistParams?: ModelStageConfig;
   proposalParams?: ModelStageConfig;
@@ -90,6 +93,45 @@ export interface CustomPromptsConfig {
   chatbotInstructions: string;
 }
 
+export type TemplateFieldType = 'string' | 'number' | 'date' | 'boolean' | 'enum' | 'table';
+
+export interface TemplateFieldRenderOptions {
+  highlightColor?: 'red' | 'yellow' | 'none';
+  prefix?: string;
+  suffix?: string;
+  emptyPlaceholder?: string;
+  preserveCase?: boolean;
+}
+
+export interface TemplateField {
+  name: string;
+  path: string;
+  type: TemplateFieldType;
+  required: boolean;
+  description: string;
+  enumValues?: string[];
+  defaultValue?: string | number | boolean;
+  renderOptions?: TemplateFieldRenderOptions;
+}
+
+export interface TemplateLoop {
+  tag: string;
+  description: string;
+  itemFields: TemplateField[];
+  minItems?: number;
+  allowEmpty?: boolean;
+}
+
+export interface TemplateSchema {
+  version: number;
+  templateId: string;
+  fields: TemplateField[];
+  loops: TemplateLoop[];
+  createdAt: string;
+  updatedAt: string;
+  generatedBy: 'system' | 'ai' | 'admin';
+}
+
 export interface DetectedSection {
   title: string;
   type: string;
@@ -104,7 +146,7 @@ export interface TableSchema {
 }
 
 export interface TemplateConfig {
-  id?: string;
+  id: string;
   version: number;
   name: string;
   description: string;
@@ -116,15 +158,19 @@ export interface TemplateConfig {
   standardClauses?: string;
   signatures?: string;
   createdAt: string;
+  updatedAt?: string;
   docxBlobBase64?: string;
+  blobChunks?: string[];
   originalFileName?: string;
   fileSizeBytes?: number;
+  schema?: TemplateSchema;
   detectedPlaceholders?: string[];
   structureSummary?: string;
   detectedSections?: DetectedSection[];
   tableSchemas?: TableSchema[];
   templateType?: string;
   rawTextPreview?: string;
+  isActive?: boolean;
 }
 
 export interface AuditLog {
