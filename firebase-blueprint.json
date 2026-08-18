@@ -1,5 +1,24 @@
 {
   "entities": {
+    "User": {
+      "title": "User",
+      "description": "Usuário autorizado e perfil de controle de acesso (RBAC)",
+      "type": "object",
+      "properties": {
+        "uid": { "type": "string" },
+        "email": { "type": "string" },
+        "displayName": { "type": "string" },
+        "role": { "type": "string", "enum": ["member", "admin"] },
+        "domain": { "type": "string" },
+        "provider": { "type": "string" },
+        "isActive": { "type": "boolean" },
+        "mustChangePassword": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "lastLoginAt": { "type": "string" },
+        "passwordChangedAt": { "type": "string" }
+      },
+      "required": ["uid", "email", "role", "domain", "isActive", "mustChangePassword"]
+    },
     "Meeting": {
       "title": "Meeting",
       "description": "Dados da reunião, checklist, propostas, divergências e atas geradas",
@@ -20,6 +39,9 @@
         "finalAtaData": { "type": "object" },
         "sonnetAnalysis": { "type": "string" },
         "status": { "type": "string" },
+        "ownerUid": { "type": "string" },
+        "ownerEmail": { "type": "string" },
+        "ownerName": { "type": "string" },
         "createdAt": { "type": "string" },
         "updatedAt": { "type": "string" }
       }
@@ -66,14 +88,21 @@
         "level": { "type": "string" },
         "category": { "type": "string" },
         "message": { "type": "string" },
+        "actorUid": { "type": "string" },
+        "actorEmail": { "type": "string" },
+        "actorRole": { "type": "string" },
         "details": { "type": "string" }
       }
     }
   },
   "firestore": {
+    "/users/{uid}": {
+      "schema": "User",
+      "description": "Perfis de usuários, roles e status de troca de senha"
+    },
     "/meetings/{meetingId}": {
       "schema": "Meeting",
-      "description": "Coleção de atas e reuniões salvas no histórico"
+      "description": "Coleção de atas e reuniões salvas no histórico com controle de proprietário"
     },
     "/templates/{templateId}": {
       "schema": "TemplateVersion",

@@ -1,14 +1,28 @@
 import { initializeApp } from "firebase/app";
-import { getFirestore } from "firebase/firestore";
+import { getFirestore, setLogLevel, doc, getDocFromServer } from "firebase/firestore";
+import { getAuth, setPersistence, browserLocalPersistence } from "firebase/auth";
+import firebaseConfig from "../../firebase-applet-config.json";
 
-const firebaseConfig = {
-  projectId: "biti9-performevaluationsummary",
-  appId: "1:1007003515485:web:553f9f79017ff4677a2bb4",
-  apiKey: "AIzaSyAKNOuwGwpSSVSzLCvoXTFTDrhd-gvH3f8",
-  authDomain: "biti9-performevaluationsummary.firebaseapp.com",
-  storageBucket: "biti9-performevaluationsummary.firebasestorage.app",
-  messagingSenderId: "1007003515485",
-};
+// Mute internal SDK transport level idle logs
+setLogLevel('silent');
 
-const app = initializeApp(firebaseConfig);
-export const db = getFirestore(app, "ai-studio-495e4a2f-bc01-4197-9d3d-8b17577710a2");
+export const app = initializeApp(firebaseConfig);
+export const db = getFirestore(app, firebaseConfig.firestoreDatabaseId || "ai-studio-495e4a2f-bc01-4197-9d3d-8b17577710a2");
+export const auth = getAuth(app);
+
+setPersistence(auth, browserLocalPersistence).catch((err) => {
+  console.warn("Aviso ao definir persistência do Firebase Auth:", err);
+});
+
+// Validate connection to Firestore as required by Firebase skill
+async function testConnection() {
+  try {
+    await getDocFromServer(doc(db, 'test', 'connection'));
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('the client is offline')) {
+      console.error("Please check your Firebase configuration.");
+    }
+  }
+}
+testConnection();
+

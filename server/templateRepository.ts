@@ -1,38 +1,17 @@
-import { initializeApp, getApps, getApp } from 'firebase/app';
-import { 
-  getFirestore, 
-  doc, 
-  getDoc, 
-  setDoc, 
-  getDocs, 
-  collection, 
-  query, 
-  orderBy,
-  deleteDoc
-} from 'firebase/firestore';
 import fs from 'fs';
 import path from 'path';
-import { TemplateDocument, TemplateSchema, TemplateField, TemplateLoop } from './types/template';
+import { TemplateDocument, TemplateSchema, TemplateField, TemplateLoop, TableInspection } from './types/template';
 import { addLog } from './logger';
-
-// Load config from firebase-applet-config.json
-let firebaseConfig: any = null;
-try {
-  const configPath = path.resolve(process.cwd(), 'firebase-applet-config.json');
-  if (fs.existsSync(configPath)) {
-    firebaseConfig = JSON.parse(fs.readFileSync(configPath, 'utf-8'));
-  }
-} catch (err) {
-  console.warn('Erro ao carregar firebase-applet-config.json:', err);
-}
+import { initFirebaseAdmin } from './auth';
 
 function getFirestoreInstance() {
-  if (!firebaseConfig || !firebaseConfig.projectId) {
+  try {
+    const { adminDb } = initFirebaseAdmin();
+    return adminDb;
+  } catch (err) {
+    console.warn('Firebase Admin não inicializado para templateRepository:', err);
     return null;
   }
-  const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
-  const databaseId = firebaseConfig.firestoreDatabaseId || '(default)';
-  return getFirestore(app, databaseId);
 }
 
 const TEMPLATES_COLLECTION = 'templates';
@@ -55,9 +34,13 @@ function ensureDataDir() {
 }
 
 /**
- * Creates a default standard TemplateSchema when a template is uploaded without custom mappings.
+ * Creates a default standard TemplateSchema when a template is uploaded.
  */
-export function buildDefaultSchema(templateId: string, placeholders: string[] = []): TemplateSchema {
+export function buildDefaultSchema(
+  templateId: string,
+  placeholders: string[] = [],
+  tables: TableInspection[] = []
+): TemplateSchema {
   const standardFields: TemplateField[] = [
     { name: 'obraCodigo', path: 'abertura.obraCodigo', type: 'string', required: true, description: 'Código identificador da obra' },
     { name: 'obraNome', path: 'abertura.obraNome', type: 'string', required: false, description: 'Nome do empreendimento ou condomínio' },
@@ -67,16 +50,71 @@ export function buildDefaultSchema(templateId: string, placeholders: string[] = 
     { name: 'rm', path: 'abertura.rm', type: 'string', required: false, description: 'Número da Requisição de Material (RM)' },
     { name: 'cot', path: 'abertura.cot', type: 'string', required: false, description: 'Número do Mapa de Cotação (COT)' },
     { name: 'dataReuniao', path: 'metadata.dataReuniao', type: 'date', required: false, description: 'Data da realização da reunião' },
+    { name: 'linkReuniao', path: 'metadata.linkReuniao', type: 'string', required: false, description: 'Link ou gravação da reunião' },
     { name: 'companyName', path: 'template.companyName', type: 'string', required: false, description: 'Nome corporativo da empresa ou departamento' },
     { name: 'standardClauses', path: 'template.standardClauses', type: 'string', required: false, description: 'Cláusulas padrão de contratação' },
     { name: 'signatures', path: 'template.signatures', type: 'string', required: false, description: 'Participantes e vistos finais' },
     { name: 'resumo', path: 'finalAta.notes', type: 'string', required: false, description: 'Resumo executivo ou notas gerais' },
   ];
 
+  // Identify main body table (usually table with 4 columns and largest row count or table 4)
+  let mainTableIndex = 0;
+  let mainProtoRow = 1;
+  let hasMainTable = false;
+
+  if (tables && tables.length > 0) {
+    // Find table with 4 columns (Item | Descrição/Corpo | Responsável | Prazo)
+    const fourColTbl = tables.find(t => t.columnCount === 4 && t.rowCount >= 2);
+    if (fourColTbl) {
+      mainTableIndex = fourColTbl.index;
+      mainProtoRow = 1;
+      hasMainTable = true;
+    } else {
+      // Find largest table
+      const largestTbl = [...tables].sort((a, b) => b.rowCount - a.rowCount)[0];
+      if (largestTbl) {
+        mainTableIndex = largestTbl.index;
+        mainProtoRow = Math.min(1, largestTbl.rowCount - 1);
+        hasMainTable = true;
+      }
+    }
+  }
+
   const standardLoops: TemplateLoop[] = [
+    {
+      tag: 'itens',
+      description: 'Tabela principal de deliberações, itens acordados e pendências da reunião',
+      tableIndex: hasMainTable ? mainTableIndex : 0,
+      prototypeRowIndex: mainProtoRow,
+      columns: [
+        { cellIndex: 0, key: 'num', label: 'Item / Número' },
+        { cellIndex: 1, key: '@corpoXml', label: 'Conteúdo Formatado OOXML' },
+        { cellIndex: 2, key: 'responsavel', label: 'Responsável' },
+        { cellIndex: 3, key: 'prazo', label: 'Prazo Limite' }
+      ],
+      removeOtherRows: true,
+      allowEmpty: true,
+      itemFields: [
+        { name: 'num', path: 'item.num', type: 'string', required: false, description: 'Número do item' },
+        { name: 'corpoXml', path: 'item.corpoXml', type: 'string', required: false, description: 'XML formatado de título, deliberação e ressalva' },
+        { name: 'titulo', path: 'item.titulo', type: 'string', required: false, description: 'Título do item' },
+        { name: 'descricao', path: 'item.descricao', type: 'string', required: false, description: 'Descrição da deliberação' },
+        { name: 'responsavel', path: 'item.responsavel', type: 'string', required: false, description: 'Responsável' },
+        { name: 'prazo', path: 'item.prazo', type: 'string', required: false, description: 'Prazo limite' }
+      ]
+    },
     {
       tag: 'topics',
       description: 'Tabela ou lista de tópicos da Análise de Aderência do Checklist',
+      tableIndex: hasMainTable ? mainTableIndex : 0,
+      prototypeRowIndex: mainProtoRow,
+      columns: [
+        { cellIndex: 0, key: 'num', label: 'Item / Número' },
+        { cellIndex: 1, key: '@corpoXml', label: 'Conteúdo Formatado' },
+        { cellIndex: 2, key: 'responsavel', label: 'Responsável' },
+        { cellIndex: 3, key: 'prazo', label: 'Prazo' }
+      ],
+      removeOtherRows: true,
       allowEmpty: true,
       itemFields: [
         { name: 'num', path: 'item.num', type: 'string', required: false, description: 'Número sequencial' },
@@ -89,19 +127,17 @@ export function buildDefaultSchema(templateId: string, placeholders: string[] = 
       ]
     },
     {
-      tag: 'divergences',
-      description: 'Tabela ou lista de divergências comerciais e técnicas da proposta',
-      allowEmpty: true,
-      itemFields: [
-        { name: 'num', path: 'item.num', type: 'string', required: false, description: 'Número sequencial' },
-        { name: 'severity', path: 'item.severity', type: 'enum', enumValues: ['BAIXA', 'MEDIA', 'ALTA'], required: false, description: 'Nível de severidade da divergência' },
-        { name: 'description', path: 'item.description', type: 'string', required: true, description: 'Descrição da divergência identificada' },
-        { name: 'source', path: 'item.source', type: 'string', required: false, description: 'Página ou anexo da proposta' },
-      ]
-    },
-    {
       tag: 'agreedItems',
       description: 'Lista de itens aprovados e acordados na reunião de negociação',
+      tableIndex: hasMainTable ? mainTableIndex : 0,
+      prototypeRowIndex: mainProtoRow,
+      columns: [
+        { cellIndex: 0, key: 'num', label: 'Item' },
+        { cellIndex: 1, key: '@corpoXml', label: 'Descrição Acordada' },
+        { cellIndex: 2, key: 'responsavel', label: 'Responsável' },
+        { cellIndex: 3, key: 'prazo', label: 'Prazo' }
+      ],
+      removeOtherRows: true,
       allowEmpty: true,
       itemFields: [
         { name: 'num', path: 'item.num', type: 'string', required: false, description: 'Número sequencial' },
@@ -113,6 +149,15 @@ export function buildDefaultSchema(templateId: string, placeholders: string[] = 
     {
       tag: 'pendingItems',
       description: 'Lista de pendências remanescentes com destaque em vermelho',
+      tableIndex: hasMainTable ? mainTableIndex : 0,
+      prototypeRowIndex: mainProtoRow,
+      columns: [
+        { cellIndex: 0, key: 'num', label: 'Item' },
+        { cellIndex: 1, key: '@corpoXml', label: 'Pendência' },
+        { cellIndex: 2, key: 'responsavel', label: 'Responsável' },
+        { cellIndex: 3, key: 'prazo', label: 'Prazo' }
+      ],
+      removeOtherRows: true,
       allowEmpty: true,
       itemFields: [
         { name: 'num', path: 'item.num', type: 'string', required: false, description: 'Número sequencial' },
@@ -120,26 +165,14 @@ export function buildDefaultSchema(templateId: string, placeholders: string[] = 
         { name: 'responsavel', path: 'item.responsavel', type: 'string', required: false, description: 'Responsável pela pendência' },
         { name: 'prazo', path: 'item.prazo', type: 'string', required: false, description: 'Prazo de conclusão' },
       ]
-    },
-    {
-      tag: 'participantes',
-      description: 'Tabela de participantes presentes na reunião',
-      allowEmpty: true,
-      itemFields: [
-        { name: 'nome', path: 'item.nome', type: 'string', required: false, description: 'Nome do participante' },
-        { name: 'cargo', path: 'item.cargo', type: 'string', required: false, description: 'Função ou cargo' },
-        { name: 'empresa', path: 'item.empresa', type: 'string', required: false, description: 'Empresa representada' },
-        { name: 'email', path: 'item.email', type: 'string', required: false, description: 'E-mail corporativo' },
-        { name: 'visto', path: 'item.visto', type: 'string', required: false, description: 'Assinatura ou visto' },
-      ]
     }
   ];
 
   // Add any extra detected placeholders as optional string fields if not already present
   for (const tag of placeholders) {
-    const clean = tag.replace(/^[#^/]/, '').trim();
+    const clean = tag.replace(/^[#^/@]/, '').trim();
     if (!clean) continue;
-    const isLoop = ['topics', 'divergences', 'agreeditems', 'pendingitems', 'participantes'].includes(clean.toLowerCase());
+    const isLoop = ['topics', 'divergences', 'agreeditems', 'pendingitems', 'participantes', 'itens'].includes(clean.toLowerCase());
     if (isLoop) continue;
     const exists = standardFields.some(f => f.name.toLowerCase() === clean.toLowerCase());
     if (!exists) {
@@ -148,10 +181,34 @@ export function buildDefaultSchema(templateId: string, placeholders: string[] = 
         path: `custom.${clean}`,
         type: 'string',
         required: false,
-        description: `Variável personalizada {${clean}} identificada no template`
+        description: `Variável {${clean}} identificada no template`
       });
     }
   }
+
+  const defaultPlaceholderMap: Record<string, string> = {
+    '[CÓDIGO DA OBRA]': 'obraCodigo',
+    '[CODIGO DA OBRA]': 'obraCodigo',
+    '[CÓDIGO_DA_OBRA]': 'obraCodigo',
+    '[NOME DA OBRA]': 'obraNome',
+    '[NOME_DA_OBRA]': 'obraNome',
+    '[FORNECEDOR]': 'fornecedor',
+    '[ASSUNTO]': 'assunto',
+    '[SERVIÇO]': 'servico',
+    '[SERVICO]': 'servico',
+    '[EXTRAIR DO FIRE FLIES]': 'resumo',
+    '[EXTRAIR_DO_FIRE_FLIES]': 'resumo',
+    '[caminho da rede]': 'linkReuniao',
+    '[caminho_da_rede]': 'linkReuniao',
+    'RM XXX COT XXX': 'RM {rm} COT {cot}',
+    'RM XXX': 'RM {rm}',
+    'COT XXX': 'COT {cot}',
+    '<<obraCodigo>>': 'obraCodigo',
+    '<<fornecedor>>': 'fornecedor',
+    '<<obraNome>>': 'obraNome',
+    '<<assunto>>': 'assunto',
+    '<<servico>>': 'servico'
+  };
 
   const now = new Date().toISOString();
   return {
@@ -159,6 +216,8 @@ export function buildDefaultSchema(templateId: string, placeholders: string[] = 
     templateId,
     fields: standardFields,
     loops: standardLoops,
+    placeholderMap: defaultPlaceholderMap,
+    removerRealceAmarelo: true,
     createdAt: now,
     updatedAt: now,
     generatedBy: 'system'
@@ -208,28 +267,25 @@ export async function getActiveTemplateFromDb(): Promise<TemplateDocument | null
   if (db) {
     try {
       // 1. Check pointer document config/activeTemplate
-      const configRef = doc(db, SYSTEM_CONFIG_COLLECTION, ACTIVE_TEMPLATE_DOC);
-      const configSnap = await withTimeout(getDoc(configRef), 2000);
-      let activeId = configSnap.exists() ? (configSnap.data()?.templateId as string) : null;
+      const configDoc = await withTimeout(db.collection(SYSTEM_CONFIG_COLLECTION).doc(ACTIVE_TEMPLATE_DOC).get(), 2000);
+      let activeId = configDoc.exists ? (configDoc.data()?.templateId as string) : null;
 
       if (activeId) {
-        const templateRef = doc(db, TEMPLATES_COLLECTION, activeId);
-        const templateSnap = await withTimeout(getDoc(templateRef), 2000);
-        if (templateSnap.exists()) {
-          const rawData = templateSnap.data() as any;
+        const templateDoc = await withTimeout(db.collection(TEMPLATES_COLLECTION).doc(activeId).get(), 2000);
+        if (templateDoc.exists) {
+          const rawData = templateDoc.data() as any;
           const fullBase64 = reassembleChunks(rawData);
           return {
             ...rawData,
-            id: templateSnap.id,
+            id: templateDoc.id,
             docxBlobBase64: fullBase64,
-            schema: rawData.schema || buildDefaultSchema(templateSnap.id, rawData.detectedPlaceholders)
+            schema: rawData.schema || buildDefaultSchema(templateDoc.id, rawData.detectedPlaceholders, rawData.tables)
           } as TemplateDocument;
         }
       }
 
       // 2. Query collection templates for isActive == true or highest version
-      const colRef = collection(db, TEMPLATES_COLLECTION);
-      const snap = await withTimeout(getDocs(colRef), 2000);
+      const snap = await withTimeout(db.collection(TEMPLATES_COLLECTION).get(), 2000);
       if (!snap.empty) {
         let foundDocs = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
         foundDocs.sort((a, b) => (b.version || 0) - (a.version || 0));
@@ -239,7 +295,7 @@ export async function getActiveTemplateFromDb(): Promise<TemplateDocument | null
           return {
             ...active,
             docxBlobBase64: fullBase64,
-            schema: active.schema || buildDefaultSchema(active.id, active.detectedPlaceholders)
+            schema: active.schema || buildDefaultSchema(active.id, active.detectedPlaceholders, active.tables)
           } as TemplateDocument;
         }
       }
@@ -265,12 +321,9 @@ export async function getAllTemplateVersionsFromDb(): Promise<{
 
   if (db) {
     try {
-      const colRef = collection(db, TEMPLATES_COLLECTION);
-      const snap = await getDocs(colRef);
-      
-      const configRef = doc(db, SYSTEM_CONFIG_COLLECTION, ACTIVE_TEMPLATE_DOC);
-      const configSnap = await getDoc(configRef);
-      const configActiveId = configSnap.exists() ? (configSnap.data()?.templateId as string) : '';
+      const snap = await db.collection(TEMPLATES_COLLECTION).get();
+      const configDoc = await db.collection(SYSTEM_CONFIG_COLLECTION).doc(ACTIVE_TEMPLATE_DOC).get();
+      const configActiveId = configDoc.exists ? (configDoc.data()?.templateId as string) : '';
 
       if (!snap.empty) {
         const list: TemplateDocument[] = snap.docs.map(d => {
@@ -279,7 +332,7 @@ export async function getAllTemplateVersionsFromDb(): Promise<{
             ...raw,
             id: d.id,
             docxBlobBase64: reassembleChunks(raw),
-            schema: raw.schema || buildDefaultSchema(d.id, raw.detectedPlaceholders)
+            schema: raw.schema || buildDefaultSchema(d.id, raw.detectedPlaceholders, raw.tables)
           };
         });
 
@@ -313,7 +366,6 @@ export async function getAllTemplateVersionsFromDb(): Promise<{
 export const getTemplateVersionsFromDb = getAllTemplateVersionsFromDb;
 export const rollbackTemplateInDb = setActiveTemplateInDb;
 
-
 /**
  * Saves a new template document in Firestore with automated chunking for payloads > 600KB.
  */
@@ -329,7 +381,7 @@ export async function saveTemplateDocumentToDb(
   const newId = `template-v${newVersion}-${Date.now().toString(36)}`;
   const now = new Date().toISOString();
 
-  const generatedSchema = data.schema || buildDefaultSchema(newId, data.detectedPlaceholders);
+  const generatedSchema = data.schema || buildDefaultSchema(newId, data.detectedPlaceholders, data.tables);
 
   let docxBlobBase64 = data.docxBlobBase64;
   let blobChunks: string[] | undefined;
@@ -355,12 +407,10 @@ export async function saveTemplateDocumentToDb(
   // 1. Save to Firestore
   if (db) {
     try {
-      const docRef = doc(db, TEMPLATES_COLLECTION, newId);
-      await setDoc(docRef, newDoc);
+      await db.collection(TEMPLATES_COLLECTION).doc(newId).set(newDoc);
 
       // Set as active template pointer in config
-      const configRef = doc(db, SYSTEM_CONFIG_COLLECTION, ACTIVE_TEMPLATE_DOC);
-      await setDoc(configRef, { templateId: newId, updatedAt: now });
+      await db.collection(SYSTEM_CONFIG_COLLECTION).doc(ACTIVE_TEMPLATE_DOC).set({ templateId: newId, updatedAt: now });
 
       addLog('INFO', 'ADMIN', `Novo Template salvo com sucesso no Firestore: v${newVersion} (${newDoc.name})`, {
         templateId: newId,
@@ -392,15 +442,13 @@ export async function setActiveTemplateInDb(targetId: string): Promise<TemplateD
 
   if (db) {
     try {
-      const templateRef = doc(db, TEMPLATES_COLLECTION, targetId);
-      const snap = await getDoc(templateRef);
-      if (snap.exists()) {
-        const raw = snap.data() as any;
+      const docSnap = await db.collection(TEMPLATES_COLLECTION).doc(targetId).get();
+      if (docSnap.exists) {
+        const raw = docSnap.data() as any;
         const now = new Date().toISOString();
         
         // Update active pointer
-        const configRef = doc(db, SYSTEM_CONFIG_COLLECTION, ACTIVE_TEMPLATE_DOC);
-        await setDoc(configRef, { templateId: targetId, updatedAt: now });
+        await db.collection(SYSTEM_CONFIG_COLLECTION).doc(ACTIVE_TEMPLATE_DOC).set({ templateId: targetId, updatedAt: now });
 
         addLog('WARN', 'ADMIN', `Rollback de template realizado no Firestore para a versão v${raw.version} - ${raw.name}`, {
           targetId,
@@ -411,7 +459,7 @@ export async function setActiveTemplateInDb(targetId: string): Promise<TemplateD
           ...raw,
           id: targetId,
           docxBlobBase64: reassembleChunks(raw),
-          schema: raw.schema || buildDefaultSchema(targetId, raw.detectedPlaceholders)
+          schema: raw.schema || buildDefaultSchema(targetId, raw.detectedPlaceholders, raw.tables)
         };
       }
     } catch (err: any) {
@@ -437,8 +485,7 @@ export async function updateTemplateSchemaInDb(templateId: string, schema: Templ
 
   if (db) {
     try {
-      const templateRef = doc(db, TEMPLATES_COLLECTION, templateId);
-      await setDoc(templateRef, { schema: updatedSchema, updatedAt: now }, { merge: true });
+      await db.collection(TEMPLATES_COLLECTION).doc(templateId).set({ schema: updatedSchema, updatedAt: now }, { merge: true });
 
       addLog('INFO', 'ADMIN', `Schema do Template ${templateId} atualizado no Firestore pelo Administrador`, {
         templateId,
@@ -467,20 +514,19 @@ export async function deleteTemplateFromDb(templateId: string): Promise<{ succes
   if (db) {
     try {
       // 1. Delete template document
-      await deleteDoc(doc(db, TEMPLATES_COLLECTION, templateId));
+      await db.collection(TEMPLATES_COLLECTION).doc(templateId).delete();
       
       // 2. Fetch remaining templates
-      const remainingSnap = await getDocs(query(collection(db, TEMPLATES_COLLECTION), orderBy('version', 'desc')));
+      const remainingSnap = await db.collection(TEMPLATES_COLLECTION).orderBy('version', 'desc').get();
       remainingList = remainingSnap.docs.map(d => ({ id: d.id, ...d.data() } as TemplateDocument));
 
       // 3. Check active template reference
-      const activeRef = doc(db, SYSTEM_CONFIG_COLLECTION, ACTIVE_TEMPLATE_DOC);
-      const activeSnap = await getDoc(activeRef);
-      const currentActiveId = activeSnap.exists() ? (activeSnap.data()?.templateId || activeSnap.data()?.activeId) : '';
+      const activeDoc = await db.collection(SYSTEM_CONFIG_COLLECTION).doc(ACTIVE_TEMPLATE_DOC).get();
+      const currentActiveId = activeDoc.exists ? (activeDoc.data()?.templateId || activeDoc.data()?.activeId) : '';
 
       if (currentActiveId === templateId || !currentActiveId) {
         newActiveId = remainingList.length > 0 ? remainingList[0].id : '';
-        await setDoc(activeRef, {
+        await db.collection(SYSTEM_CONFIG_COLLECTION).doc(ACTIVE_TEMPLATE_DOC).set({
           templateId: newActiveId,
           activeId: newActiveId,
           updatedAt: new Date().toISOString(),
@@ -524,7 +570,7 @@ function loadPersistedTemplatesFromDisk(): { versions: TemplateDocument[]; activ
       if (Array.isArray(parsed.versions) && parsed.versions.length > 0) {
         const versions: TemplateDocument[] = parsed.versions.map((t: any) => ({
           ...t,
-          schema: t.schema || buildDefaultSchema(t.id, t.detectedPlaceholders)
+          schema: t.schema || buildDefaultSchema(t.id, t.detectedPlaceholders, t.tables)
         }));
         return {
           versions,

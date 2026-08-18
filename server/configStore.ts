@@ -157,8 +157,8 @@ let activeModels: AIModelsConfig = {
 };
 
 let activePrompts: CustomPromptsConfig = {
-  checklistInstructions: 'Priorize regras de segurança, retenções contratuais, ART, cronogramas de mobilização e escopos de fornecimento da obra. Extraia cada regra com precisão para preenchimento dos campos do template DOCX salvo.',
-  proposalInstructions: 'Verifique com rigor desvios de BDI, impostos inclusos/exclusos, reajustes, validade da proposta e condições de pagamento. Mapeie divergências com severidade (ALTA/MÉDIA/BAIXA) para preenchimento dos campos do template DOCX salvo.',
+  checklistInstructions: 'As premissas, exigências e conteúdos do Check List devem ser obrigatoriamente enquadrados e categorizados de acordo com a estrutura, seções e tabelas do Template DOCX ativo. Mapeie todas as regras técnicas, operacionais, critérios de medição, logística de canteiro, segurança do trabalho (EPI/PCMSO/ART), retenções e penalidades em tópicos estruturados.',
+  proposalInstructions: 'Verifique com rigor desvios de BDI, impostos inclusos/exclusos, reajustes, validade da proposta e condições de pagamento confrontando com o Check List da Obra. Mapeie divergências com severidade (ALTA/MÉDIA/BAIXA) para a pauta da reunião.',
   preAtaInstructions: 'Destaque pontos de atenção em vermelho e elabore perguntas estratégicas para direcionar a mesa de negociação. Estruture os tópicos de aderência para alimentar com fidelidade as variáveis e tabelas do template oficial DOCX salvo pelo usuário.',
   finalAtaInstructions: 'Estruture acordos e pendências com clareza executiva, identificando responsáveis e prazos estritos. Formate a saída para preencher com precisão as tabelas e variáveis do template DOCX oficial.',
   chatbotInstructions: 'Você é um assistente especialista em suprimentos e atas de reunião de uma construtora. Conhece a estrutura de templates DOCX/XML e auxilia no preenchimento de termos contratuais e consulta a atas anteriores.'
@@ -172,6 +172,7 @@ let activeTemplateId: string = loadedTemplateData.activeId;
 export function getActiveModels(): AIModelsConfig {
   return { ...activeModels };
 }
+export const getStoredModelsConfig = getActiveModels;
 
 export function updateActiveModels(models: Partial<AIModelsConfig>): AIModelsConfig {
   // Sync individual model names and parameter sub-objects
@@ -220,6 +221,7 @@ export function updateActiveModels(models: Partial<AIModelsConfig>): AIModelsCon
 export function getActivePrompts(): CustomPromptsConfig {
   return { ...activePrompts };
 }
+export const getStoredPrompts = getActivePrompts;
 
 export function updateActivePrompts(prompts: Partial<CustomPromptsConfig>): CustomPromptsConfig {
   activePrompts = { ...activePrompts, ...prompts };

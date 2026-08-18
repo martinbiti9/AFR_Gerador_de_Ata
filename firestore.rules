@@ -1,8 +1,31 @@
 rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
-    match /{document=**} {
-      allow read, write: if true;
+
+    function signedIn()  { return request.auth != null; }
+    function isAdmin()   { return signedIn() && request.auth.token.role == 'admin'; }
+    function isOwner(r)  { return signedIn() && r.ownerUid == request.auth.uid; }
+
+    match /users/{uid} {
+      allow read:   if isAdmin() || (signedIn() && request.auth.uid == uid);
+      allow write:  if isAdmin();
     }
+
+    match /meetings/{meetingId} {
+      allow read:   if isAdmin() || isOwner(resource.data);
+      allow create: if signedIn()
+                    && request.resource.data.ownerUid == request.auth.uid;
+      allow update: if isAdmin()
+                    || (isOwner(resource.data)
+                        && request.resource.data.ownerUid == resource.data.ownerUid);
+      allow delete: if isAdmin() || isOwner(resource.data);
+    }
+
+    match /templates/{id}                    { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /templateBlobs/{id}/{doc=**}       { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /config/{id}                       { allow read: if signedIn(); allow write: if isAdmin(); }
+    match /logs/{id}                         { allow read: if isAdmin();  allow create: if signedIn(); }
+
+    match /{document=**} { allow read, write: if false; }
   }
 }

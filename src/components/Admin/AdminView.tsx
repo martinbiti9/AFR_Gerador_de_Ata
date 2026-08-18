@@ -4,7 +4,9 @@ import { ModelsTab } from './ModelsTab';
 import { PromptsTab } from './PromptsTab';
 import { TemplatesTab } from './TemplatesTab';
 import { LogsTab } from './LogsTab';
-import { Shield, Cpu, MessageSquareCode, FileText, Terminal, ArrowLeft, RefreshCw } from 'lucide-react';
+import { Shield, Cpu, MessageSquareCode, FileText, Terminal, ArrowLeft, RefreshCw, AlertCircle, LogOut } from 'lucide-react';
+import { useAuth } from '../../contexts/AuthContext';
+import { safeFetchJson } from '../../utils/api';
 
 interface Props {
   onBackToApp: () => void;
@@ -14,6 +16,9 @@ interface Props {
 type TabType = 'models' | 'prompts' | 'templates' | 'logs';
 
 export function AdminView({ onBackToApp, initialTab = 'models' }: Props) {
+  const { role, profile, logout } = useAuth();
+  const isAdmin = role === 'admin';
+
   const [activeTab, setActiveTab] = useState<TabType>(initialTab);
   const [models, setModels] = useState<AIModelsConfig>({
     checklistModel: 'gemini-3.1-pro-preview',
@@ -35,9 +40,8 @@ export function AdminView({ onBackToApp, initialTab = 'models' }: Props) {
   const fetchConfig = async () => {
     try {
       setLoading(true);
-      const res = await fetch('/api/admin/config');
-      const data = await res.json();
-      if (res.ok) {
+      const data = await safeFetchJson('/api/admin/config');
+      if (data) {
         if (data.models) setModels(data.models);
         if (data.prompts) setPrompts(data.prompts);
       }
@@ -49,30 +53,57 @@ export function AdminView({ onBackToApp, initialTab = 'models' }: Props) {
   };
 
   useEffect(() => {
-    fetchConfig();
-  }, []);
+    if (isAdmin) {
+      fetchConfig();
+    }
+  }, [isAdmin]);
 
   const handleSaveModels = async (updated: AIModelsConfig) => {
-    const res = await fetch('/api/admin/config/models', {
+    const data = await safeFetchJson('/api/admin/config/models', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updated),
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Erro ao salvar modelos.');
     setModels(data.models);
   };
 
   const handleSavePrompts = async (updated: CustomPromptsConfig) => {
-    const res = await fetch('/api/admin/config/prompts', {
+    const data = await safeFetchJson('/api/admin/config/prompts', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(updated),
     });
-    const data = await res.json();
-    if (!res.ok) throw new Error(data.error || 'Erro ao salvar instruções de prompt.');
     setPrompts(data.prompts);
   };
+
+  // If user is not an administrator
+  if (!isAdmin) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
+        <div className="bg-white rounded-2xl p-8 max-w-md w-full text-center space-y-4 shadow-2xl border border-slate-200">
+          <div className="w-12 h-12 bg-red-100 text-red-600 rounded-full flex items-center justify-center mx-auto">
+            <AlertCircle size={26} />
+          </div>
+          <h2 className="text-lg font-bold text-slate-800">Acesso Restrito a Administradores</h2>
+          <p className="text-xs text-slate-600 leading-relaxed">
+            Esta área é exclusiva para administradores da equipe Biti9 (@biti9.com.br). Seu usuário ({profile?.email}) possui perfil de membro de Suprimentos.
+          </p>
+          <div className="pt-2 flex flex-col gap-2">
+            <button
+              onClick={onBackToApp}
+              className="w-full py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-xl text-xs font-bold uppercase tracking-wider transition-colors cursor-pointer"
+            >
+              Voltar ao Gerador de Atas
+            </button>
+            <button
+              onClick={logout}
+              className="w-full py-2 text-slate-500 hover:text-slate-700 text-xs font-semibold transition-colors cursor-pointer"
+            >
+              Trocar de Conta
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-100 flex flex-col font-sans text-slate-900">
@@ -83,15 +114,20 @@ export function AdminView({ onBackToApp, initialTab = 'models' }: Props) {
             <Shield size={20} />
           </div>
           <div>
-            <h1 className="text-sm font-bold tracking-tight uppercase">Painel Administrativo do Sistema</h1>
+            <div className="flex items-center gap-2">
+              <h1 className="text-sm font-bold tracking-tight uppercase">Painel Administrativo do Sistema</h1>
+              <span className="text-[10px] font-bold px-2 py-0.5 rounded bg-purple-600 text-white uppercase tracking-wider">
+                Biti9 Admin
+              </span>
+            </div>
             <p className="text-[11px] text-slate-400">Configurações Avançadas de IA, Prompts, Templates e Logs de Auditoria</p>
           </div>
         </div>
 
-        <div className="flex items-center space-x-4">
+        <div className="flex items-center space-x-3">
           <button
             onClick={onBackToApp}
-            className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-bold uppercase tracking-tight transition-colors border border-slate-700"
+            className="flex items-center gap-2 px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white rounded-lg text-xs font-bold uppercase tracking-tight transition-colors border border-slate-700 cursor-pointer"
           >
             <ArrowLeft size={14} />
             Voltar para o App
@@ -105,7 +141,7 @@ export function AdminView({ onBackToApp, initialTab = 'models' }: Props) {
         <div className="flex flex-wrap gap-2 border-b border-slate-300 pb-3 mb-6">
           <button
             onClick={() => setActiveTab('models')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold uppercase tracking-tight transition-all ${
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold uppercase tracking-tight transition-all cursor-pointer ${
               activeTab === 'models'
                 ? 'bg-blue-600 text-white shadow-md'
                 : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-200'
@@ -117,7 +153,7 @@ export function AdminView({ onBackToApp, initialTab = 'models' }: Props) {
 
           <button
             onClick={() => setActiveTab('prompts')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold uppercase tracking-tight transition-all ${
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold uppercase tracking-tight transition-all cursor-pointer ${
               activeTab === 'prompts'
                 ? 'bg-blue-600 text-white shadow-md'
                 : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-200'
@@ -129,7 +165,7 @@ export function AdminView({ onBackToApp, initialTab = 'models' }: Props) {
 
           <button
             onClick={() => setActiveTab('templates')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold uppercase tracking-tight transition-all ${
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold uppercase tracking-tight transition-all cursor-pointer ${
               activeTab === 'templates'
                 ? 'bg-blue-600 text-white shadow-md'
                 : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-200'
@@ -141,7 +177,7 @@ export function AdminView({ onBackToApp, initialTab = 'models' }: Props) {
 
           <button
             onClick={() => setActiveTab('logs')}
-            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold uppercase tracking-tight transition-all ${
+            className={`flex items-center gap-2 px-4 py-2.5 rounded-lg text-xs font-bold uppercase tracking-tight transition-all cursor-pointer ${
               activeTab === 'logs'
                 ? 'bg-blue-600 text-white shadow-md'
                 : 'bg-white text-slate-600 hover:bg-slate-50 border border-slate-200'

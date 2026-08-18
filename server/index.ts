@@ -6,20 +6,18 @@ import {
   analyzeChecklist, 
   analyzeProposal, 
   generateFinalAta, 
-  extractTextFromFile, 
-  processChat, 
-  extractMetadataFromDocs,
-  analyzeUploadedDocxStructureWithAI
+  extractDocumentMetadata,
+  extractTextFromUploadedFiles
 } from './gemini';
 import { parseDocxTemplate } from './docx';
-import { renderAtaDocument, RenderValidationError } from './render/renderAta';
+import { renderAtaDocument, RenderValidationError, DocxRenderError } from './render/renderAta';
 import {
   getTemplateVersionsFromDb,
+  getActiveTemplateFromDb,
   saveTemplateDocumentToDb,
   rollbackTemplateInDb,
   updateTemplateSchemaInDb,
   deleteTemplateFromDb,
-  getActiveTemplateFromDb,
   buildDefaultSchema
 } from './templateRepository';
 import { TemplateSchemaZod } from './types/template';
@@ -36,6 +34,12 @@ import {
   getActivePrompts,
   updateActivePrompts
 } from './configStore';
+import {
+  initFirebaseAdmin,
+  requireAuth,
+  requireAdmin,
+  requirePasswordChanged,
+} from './auth';
 
 const upload = multer({ 
   storage: multer.memoryStorage(),
@@ -45,48 +49,193 @@ const upload = multer({
   }
 });
 
+function validatePasswordStrength(password: string): { valid: boolean; error?: string } {
+  if (!password || typeof password !== 'string' || password.length < 10) {
+    return { valid: false, error: 'A senha deve ter no mínimo 10 caracteres.' };
+  }
+  if (!/[A-Z]/.test(password)) {
+    return { valid: false, error: 'A senha deve conter ao menos uma letra maiúscula.' };
+  }
+  if (!/[a-z]/.test(password)) {
+    return { valid: false, error: 'A senha deve conter ao menos uma letra minúscula.' };
+  }
+  if (!/[0-9]/.test(password)) {
+    return { valid: false, error: 'A senha deve conter ao menos um número.' };
+  }
+  return { valid: true };
+}
+
 async function startServer() {
   const app = express();
   const PORT = 3000;
 
+  // Initialize Firebase Admin SDK
+  try {
+    initFirebaseAdmin();
+    console.log('Firebase Admin SDK inicializado com sucesso.');
+  } catch (adminErr) {
+    console.error('Erro ao inicializar Firebase Admin SDK:', adminErr);
+  }
+
   app.use(express.json({ limit: '100mb' }));
   app.use(express.urlencoded({ extended: true, limit: '100mb' }));
 
+  // ================= AUTHENTICATION & SESSION ROUTES =================
+
+  // Session hydration endpoint: returns identity, role and password status
+  app.get('/api/auth/session', requireAuth, (req, res) => {
+    const authUser = req.auth!;
+    addLog('INFO', 'AUTH', `Sessão ativa verificada para ${authUser.email}`, {
+      uid: authUser.uid,
+      role: authUser.role,
+      domain: authUser.domain,
+      mustChangePassword: authUser.mustChangePassword
+    }, { uid: authUser.uid, email: authUser.email, role: authUser.role });
+
+    res.json({
+      uid: authUser.uid,
+      email: authUser.email,
+      displayName: authUser.displayName,
+      role: authUser.role,
+      domain: authUser.domain,
+      mustChangePassword: authUser.mustChangePassword
+    });
+  });
+
+  // Mandatory / voluntary password change endpoint
+  app.post('/api/auth/change-password', requireAuth, async (req, res) => {
+    try {
+      const { newPassword } = req.body;
+      const authUser = req.auth!;
+
+      const validation = validatePasswordStrength(newPassword);
+      if (!validation.valid) {
+        return res.status(400).json({ error: validation.error });
+      }
+
+      const { adminAuth, adminDb } = initFirebaseAdmin();
+
+      // 1. Update password in Firebase Auth
+      await adminAuth.updateUser(authUser.uid, {
+        password: newPassword
+      });
+
+      // 2. Update user profile document in Firestore
+      const now = new Date().toISOString();
+      await adminDb.collection('users').doc(authUser.uid).update({
+        mustChangePassword: false,
+        passwordChangedAt: now,
+        updatedAt: now
+      });
+
+      // 3. Revoke previous refresh tokens
+      await adminAuth.revokeRefreshTokens(authUser.uid);
+
+      addLog('INFO', 'AUTH', `Senha alterada com sucesso pelo usuário ${authUser.email}`, {
+        uid: authUser.uid,
+        email: authUser.email,
+      }, { uid: authUser.uid, email: authUser.email, role: authUser.role });
+
+      res.json({ 
+        success: true, 
+        message: 'Senha alterada com sucesso! Você já pode utilizar o sistema.' 
+      });
+    } catch (error: any) {
+      console.error('Erro ao alterar senha:', error);
+      res.status(500).json({ error: error.message || 'Erro ao alterar senha.' });
+    }
+  });
+
+  // Logout audit logging endpoint
+  app.post('/api/auth/logout', requireAuth, (req, res) => {
+    const authUser = req.auth!;
+    addLog('INFO', 'AUTH', `Logout realizado pelo usuário ${authUser.email}`, {
+      uid: authUser.uid,
+      email: authUser.email,
+    }, { uid: authUser.uid, email: authUser.email, role: authUser.role });
+    res.json({ success: true });
+  });
+
   // ================= EXTRACTION & AI PIPELINE =================
   
-  app.post('/api/extract-metadata', upload.array('files'), async (req, res) => {
+  app.post('/api/extract-text', requireAuth, requirePasswordChanged, upload.array('files'), async (req, res) => {
     try {
       const files = req.files as Express.Multer.File[];
-      const rawText = req.body.text as string;
-      const metadata = await extractMetadataFromDocs(files, rawText);
-      res.json({ success: true, metadata });
+      if (!files || files.length === 0) {
+        return res.status(400).json({ error: 'Nenhum arquivo enviado para extração de texto.' });
+      }
+
+      const extractedText = await extractTextFromUploadedFiles(files);
+      res.json({ success: true, text: extractedText });
+    } catch (error: any) {
+      console.error('Error extracting text from files:', error);
+      res.status(500).json({ error: error.message || 'Erro ao extrair texto do arquivo.' });
+    }
+  });
+
+  app.post('/api/extract-metadata', requireAuth, requirePasswordChanged, upload.array('files'), async (req, res) => {
+    try {
+      const files = req.files as Express.Multer.File[];
+      const inlineDataFiles = (files || []).map(f => ({
+        inlineData: {
+          data: f.buffer.toString('base64'),
+          mimeType: f.mimetype || 'application/pdf'
+        }
+      }));
+
+      const metadata = await extractDocumentMetadata(inlineDataFiles);
+      res.json({ success: true, metadata: metadata.metadata });
     } catch (error: any) {
       console.error('Error extracting metadata:', error);
       res.status(500).json({ error: error.message || 'Erro ao extrair metadados da obra.' });
     }
   });
 
-  app.post('/api/analyze-checklist', upload.array('files'), async (req, res) => {
+  app.post('/api/analyze-checklist', requireAuth, requirePasswordChanged, upload.array('files'), async (req, res) => {
     try {
+      // 1. Template existence check
+      const activeTemplate = await getActiveTemplateFromDb();
+      if (!activeTemplate || !activeTemplate.docxBlobBase64) {
+        return res.status(422).json({
+          error: 'Nenhum template DOCX ativo disponível no sistema. Faça o upload do template oficial antes de realizar as análises.',
+          code: 'TEMPLATE_REQUIRED'
+        });
+      }
+
       const files = req.files as Express.Multer.File[];
       if (!files || files.length === 0) {
         return res.status(400).json({ error: 'Nenhum arquivo enviado.' });
       }
+
+      const inlineDataFiles = files.map(f => ({
+        inlineData: {
+          data: f.buffer.toString('base64'),
+          mimeType: f.mimetype || 'application/pdf'
+        }
+      }));
       
-      const customInstructions = req.body.customInstructions;
-      const result = await analyzeChecklist(files, customInstructions);
+      const result = await analyzeChecklist(inlineDataFiles);
       res.json(result);
     } catch (error: any) {
       console.error('Error analyzing checklist:', error);
-      res.status(500).json({ error: error.message || 'Erro ao processar arquivos.' });
+      res.status(500).json({ error: error.message || 'Erro ao processar arquivos de checklist.' });
     }
   });
 
-  app.post('/api/analyze-proposal', upload.array('files'), async (req, res) => {
+  app.post('/api/analyze-proposal', requireAuth, requirePasswordChanged, upload.array('files'), async (req, res) => {
     try {
+      // 1. Template existence check
+      const activeTemplate = await getActiveTemplateFromDb();
+      if (!activeTemplate || !activeTemplate.docxBlobBase64) {
+        return res.status(422).json({
+          error: 'Nenhum template DOCX ativo disponível no sistema. Faça o upload do template oficial antes de realizar as análises.',
+          code: 'TEMPLATE_REQUIRED'
+        });
+      }
+
       const files = req.files as Express.Multer.File[];
       if (!files || files.length === 0) {
-        return res.status(400).json({ error: 'Nenhum arquivo enviado.' });
+        return res.status(400).json({ error: 'Nenhum arquivo de proposta enviado.' });
       }
       
       const checklistStr = req.body.checklist;
@@ -94,20 +243,35 @@ async function startServer() {
         return res.status(400).json({ error: 'Checklist não fornecido.' });
       }
       const checklist = JSON.parse(checklistStr);
-      const customInstructions = req.body.customInstructions;
+
+      const inlineDataFiles = files.map(f => ({
+        inlineData: {
+          data: f.buffer.toString('base64'),
+          mimeType: f.mimetype || 'application/pdf'
+        }
+      }));
       
-      const result = await analyzeProposal(files, checklist, customInstructions);
+      const result = await analyzeProposal(inlineDataFiles, checklist);
       res.json(result);
     } catch (error: any) {
       console.error('Error analyzing proposal:', error);
-      res.status(500).json({ error: error.message || 'Erro ao processar proposta.' });
+      res.status(500).json({ error: error.message || 'Erro ao processar proposta comercial.' });
     }
   });
 
-  app.post('/api/draft-final-ata', async (req, res) => {
+  app.post('/api/draft-final-ata', requireAuth, requirePasswordChanged, async (req, res) => {
     try {
-      const { abertura, analysisResult, divergences, transcript, customInstructions } = req.body;
-      const ataData = await generateFinalAta(abertura, analysisResult, divergences, transcript, customInstructions);
+      // 1. Template existence check
+      const activeTemplate = await getActiveTemplateFromDb();
+      if (!activeTemplate || !activeTemplate.docxBlobBase64) {
+        return res.status(422).json({
+          error: 'Nenhum template DOCX ativo disponível no sistema. Faça o upload do template oficial antes de redigir a Ata Final.',
+          code: 'TEMPLATE_REQUIRED'
+        });
+      }
+
+      const { abertura, analysisResult, divergences, transcript } = req.body;
+      const ataData = await generateFinalAta(abertura, analysisResult, divergences, transcript);
       res.json(ataData);
     } catch (error: any) {
       console.error('Error drafting final ata:', error);
@@ -117,7 +281,7 @@ async function startServer() {
 
   // ================= DETERMINISTIC DOCUMENT GENERATION =================
 
-  app.post('/api/generate-pre-ata', async (req, res) => {
+  app.post('/api/generate-pre-ata', requireAuth, requirePasswordChanged, async (req, res) => {
     try {
       const { abertura, analysisResult, divergences } = req.body;
       const { buffer, report } = await renderAtaDocument(abertura, analysisResult, divergences, null, '', true);
@@ -133,18 +297,24 @@ async function startServer() {
           missingFields: error.missingFields
         });
       }
+      if (error instanceof DocxRenderError) {
+        return res.status(500).json({
+          error: error.message,
+          details: error.details
+        });
+      }
       console.error('Error generating pre-ata:', error);
       res.status(500).json({ error: error.message || 'Erro ao gerar Pré-Ata.' });
     }
   });
 
-  app.post('/api/generate-final-ata', async (req, res) => {
+  app.post('/api/generate-final-ata', requireAuth, requirePasswordChanged, async (req, res) => {
     try {
-      const { abertura, analysisResult, divergences, transcript, finalAtaData, customInstructions } = req.body;
+      const { abertura, analysisResult, divergences, transcript, finalAtaData } = req.body;
       
       let ataData = finalAtaData;
       if (!ataData) {
-        ataData = await generateFinalAta(abertura, analysisResult, divergences, transcript, customInstructions);
+        ataData = await generateFinalAta(abertura, analysisResult, divergences, transcript);
       }
 
       const { buffer, report } = await renderAtaDocument(abertura, analysisResult, divergences, ataData, transcript, false);
@@ -160,62 +330,120 @@ async function startServer() {
           missingFields: error.missingFields
         });
       }
+      if (error instanceof DocxRenderError) {
+        return res.status(500).json({
+          error: error.message,
+          details: error.details
+        });
+      }
       console.error('Error generating final ata:', error);
       res.status(500).json({ error: error.message || 'Erro ao gerar Ata Final.' });
     }
   });
 
-  app.post('/api/extract-text', upload.array('files'), async (req, res) => {
-    try {
-      const files = req.files as Express.Multer.File[];
-      if (!files || files.length === 0) {
-        return res.status(400).json({ error: 'Nenhum arquivo enviado.' });
-      }
-      
-      let combinedText = '';
-      for (const file of files) {
-        const text = await extractTextFromFile(file);
-        combinedText += text + '\n\n';
-      }
-      
-      res.json({ text: combinedText.trim() });
-    } catch (error: any) {
-      console.error('Error extracting text:', error);
-      res.status(500).json({ error: error.message || 'Erro ao extrair texto.' });
-    }
-  });
+  // ================= DIAGNOSTIC FIXTURE ROUTE (PARTE 4) =================
 
-  app.post('/api/chat', async (req, res) => {
-    res.type('json');
+  app.post('/api/debug/render-fixture', requireAuth, requireAdmin, async (req, res) => {
     try {
-      const { history, message } = req.body;
-      if (!message || !message.trim()) {
-        return res.status(400).json({ error: 'Mensagem é obrigatória.' });
+      const template = await getActiveTemplateFromDb();
+      if (!template || !template.docxBlobBase64) {
+        return res.status(404).json({ error: 'Nenhum template DOCX ativo disponível.' });
       }
-      const reply = await processChat(history || [], message);
-      res.json({ reply: reply || 'Não foi possível gerar uma resposta.' });
-    } catch (error: any) {
-      console.error('Error processing chat:', error);
-      res.status(200).json({ 
-        reply: `Desculpe, tive uma dificuldade momentânea para processar a sua pergunta: ${error.message || 'Erro interno'}. Por favor, tente novamente.` 
+
+      const fixturePayload = {
+        abertura: {
+          obraCodigo: '590',
+          obraNome: 'HOSPITAL SABARA',
+          assunto: 'ALINHAMENTO TECNICO E COMERCIAL',
+          servico: 'PINTURA MAT E MO',
+          fornecedor: 'ALPHA PINTURA',
+          rm: 'FIXTURE-RM',
+          cot: 'FIXTURE-COT',
+          dataReuniao: '18/07/2026',
+          horaAbertura: '10h30',
+          horaEncerramento: '12h15',
+          local: 'Online, Microsoft Teams',
+        },
+        analysisResult: {
+          tipoFornecimento: 'Pintura',
+          topics: Array.from({ length: 38 }, (_, i) => ({
+            id: `topic-${i + 1}`,
+            title: `Titulo ${i + 1}`,
+            regraObra: `Regra de obra fixture ${i + 1} com texto longo o bastante para quebrar em duas linhas.`,
+            excecaoAdmitida: 'N/A',
+            pontoAtencao: i % 5 === 0 ? 'Atenção especial de prazo' : 'Nenhum',
+            perguntaFornecedor: 'Confirmar atendimento',
+            responsavel: 'Alpha Pintura',
+            prazo: '27/07/2026',
+          }))
+        },
+        divergences: [
+          { id: 'div-1', description: 'Divergência de teste 1', severity: 'MEDIA', source: 'Proposta' }
+        ],
+        finalData: {
+          agreedItems: Array.from({ length: 38 }, (_, i) => ({
+            num: String(i + 1).padStart(2, '0'),
+            titulo: `Titulo ${i + 1}`,
+            descricao: `FIXTURE item ${i + 1} com texto longo o bastante para quebrar em duas linhas.`,
+            responsavel: 'Alpha Pintura',
+            prazo: '27/07/2026',
+          })),
+          pendingItems: [],
+          notes: 'FIXTURE RESUMO DA REUNIÃO'
+        }
+      };
+
+      const isPreAta = req.body?.isPreAta ?? false;
+      const { buffer, report, naoResolvidas } = await renderAtaDocument(
+        fixturePayload.abertura,
+        fixturePayload.analysisResult,
+        fixturePayload.divergences,
+        fixturePayload.finalData,
+        'Transcrição de teste fixture',
+        isPreAta
+      );
+
+      if (req.query.download === 'true') {
+        res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+        res.setHeader('Content-Disposition', 'attachment; filename="fixture-render.docx"');
+        return res.send(buffer);
+      }
+
+      return res.json({
+        success: true,
+        templateId: template.id,
+        templateVersion: template.version,
+        fileSizeBytes: buffer.length,
+        isVerified: report.isVerified,
+        report,
+        naoResolvidas,
+        docxBase64Preview: buffer.slice(0, 100).toString('base64')
       });
+    } catch (err: any) {
+      if (err instanceof RenderValidationError) {
+        return res.status(422).json({ error: err.message, missingFields: err.missingFields });
+      }
+      return res.status(err.statusCode || 500).json({ error: err.message, details: err.details });
     }
   });
 
   // ================= MEETINGS / HISTÓRICO API =================
-  app.get('/api/meetings', (req, res) => {
+  
+  app.get('/api/meetings', requireAuth, requirePasswordChanged, (req, res) => {
     try {
       const search = req.query.search as string;
-      const meetings = getMeetingsFromStore(search);
+      const authUser = req.auth!;
+      const meetings = getMeetingsFromStore(search, { uid: authUser.uid, role: authUser.role });
       res.json({ meetings });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  app.get('/api/meetings/:id', (req, res) => {
+  app.get('/api/meetings/:id', requireAuth, requirePasswordChanged, (req, res) => {
     try {
-      const meeting = getMeetingById(req.params.id);
+      const authUser = req.auth!;
+      const meeting = getMeetingById(req.params.id, { uid: authUser.uid, role: authUser.role });
       if (!meeting) {
         return res.status(404).json({ error: 'Reunião não encontrada no histórico.' });
       }
@@ -225,18 +453,24 @@ async function startServer() {
     }
   });
 
-  app.post('/api/meetings', (req, res) => {
+  app.post('/api/meetings', requireAuth, requirePasswordChanged, (req, res) => {
     try {
-      const meeting = saveMeetingToStore(req.body);
+      const authUser = req.auth!;
+      const meeting = saveMeetingToStore(req.body, {
+        uid: authUser.uid,
+        email: authUser.email,
+        displayName: authUser.displayName
+      });
       res.json({ success: true, id: meeting.id, meeting });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  app.delete('/api/meetings/:id', (req, res) => {
+  app.delete('/api/meetings/:id', requireAuth, requirePasswordChanged, (req, res) => {
     try {
-      const deleted = deleteMeetingFromStore(req.params.id);
+      const authUser = req.auth!;
+      const deleted = deleteMeetingFromStore(req.params.id, { uid: authUser.uid, role: authUser.role });
       if (!deleted) {
         return res.status(404).json({ error: 'Reunião não encontrada para exclusão.' });
       }
@@ -249,14 +483,14 @@ async function startServer() {
   // ================= ADMIN API ENDPOINTS =================
 
   // 1. Config: Models and Custom Prompts
-  app.get('/api/admin/config', (req, res) => {
+  app.get('/api/admin/config', requireAuth, requireAdmin, (req, res) => {
     res.json({
       models: getActiveModels(),
       prompts: getActivePrompts()
     });
   });
 
-  app.post('/api/admin/config/models', (req, res) => {
+  app.post('/api/admin/config/models', requireAuth, requireAdmin, (req, res) => {
     try {
       const updated = updateActiveModels(req.body);
       res.json({ success: true, models: updated });
@@ -265,7 +499,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/admin/config/prompts', (req, res) => {
+  app.post('/api/admin/config/prompts', requireAuth, requireAdmin, (req, res) => {
     try {
       const updated = updateActivePrompts(req.body);
       res.json({ success: true, prompts: updated });
@@ -275,7 +509,7 @@ async function startServer() {
   });
 
   // 2. Logs and Audit
-  app.get('/api/admin/logs', (req, res) => {
+  app.get('/api/admin/logs', requireAuth, requireAdmin, (req, res) => {
     const limit = parseInt(req.query.limit as string) || 100;
     const level = req.query.level as string;
     const category = req.query.category as string;
@@ -284,19 +518,26 @@ async function startServer() {
     res.json({ logs });
   });
 
-  app.post('/api/admin/logs', (req, res) => {
+  app.post('/api/admin/logs', requireAuth, requireAdmin, (req, res) => {
     const { level, category, message, details } = req.body;
-    const entry = addLog(level || 'INFO', category || 'SYSTEM', message, details);
+    const authUser = req.auth;
+    const entry = addLog(
+      level || 'INFO', 
+      category || 'SYSTEM', 
+      message, 
+      details,
+      authUser ? { uid: authUser.uid, email: authUser.email, role: authUser.role } : undefined
+    );
     res.json({ success: true, entry });
   });
 
-  app.delete('/api/admin/logs', (req, res) => {
+  app.delete('/api/admin/logs', requireAuth, requireAdmin, (req, res) => {
     clearLogs();
     res.json({ success: true, message: 'Logs limpos com sucesso.' });
   });
 
   // 3. Firestore Templates & Schemas Management
-  app.get('/api/admin/templates', async (req, res) => {
+  app.get('/api/admin/templates', requireAuth, async (req, res) => {
     try {
       const data = await getTemplateVersionsFromDb();
       res.json(data);
@@ -305,7 +546,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/admin/templates', upload.single('templateFile'), async (req, res) => {
+  app.post('/api/admin/templates', requireAuth, requireAdmin, upload.single('templateFile'), async (req, res) => {
     try {
       const file = req.file;
       const { name, description, companyName, primaryColor, tableHeaderBg, fontFamily, preAtaIntro, standardClauses, signatures } = req.body;
@@ -319,15 +560,9 @@ async function startServer() {
       let fileSizeBytes: number | undefined;
       let detectedPlaceholders: string[] | undefined;
       let structureSummary: string | undefined;
-      let detectedSections: any[] | undefined;
-      let tableSchemas: any[] | undefined;
-      let templateType: string | undefined;
       let rawTextPreview: string | undefined;
-
-      let inferredCompanyName = companyName || '';
-      let inferredPreAtaIntro = preAtaIntro || '';
-      let inferredClauses = standardClauses || '';
-      let inferredSignatures = signatures || '';
+      let tables: any[] | undefined;
+      let placeholderMap: Record<string, string> | undefined;
 
       if (file) {
         const isDocx = file.originalname.toLowerCase().endsWith('.docx') || 
@@ -341,65 +576,38 @@ async function startServer() {
         originalFileName = file.originalname;
         fileSizeBytes = file.size;
 
-        // 1. Inspect DOCX structure using XML parser and Mammoth
+        // Inspect DOCX structure using XML parser and Mammoth
         const inspection = await parseDocxTemplate(file.buffer);
         detectedPlaceholders = inspection.detectedPlaceholders;
         structureSummary = inspection.structureSummary;
         rawTextPreview = inspection.rawTextPreview;
-
-        // 2. Perform deep AI structural analysis of the uploaded document
-        try {
-          const aiAnalysis = await analyzeUploadedDocxStructureWithAI(
-            inspection.rawTextPreview,
-            inspection.detectedPlaceholders,
-            inspection.tableHeaders,
-            inspection.paragraphsCount,
-            inspection.tablesCount,
-            file.originalname
-          );
-
-          if (aiAnalysis) {
-            structureSummary = aiAnalysis.structureSummary || structureSummary;
-            detectedSections = aiAnalysis.detectedSections || [];
-            tableSchemas = aiAnalysis.tableSchemas || [];
-            templateType = aiAnalysis.templateType || 'Ata de Reunião';
-            if (!inferredCompanyName && aiAnalysis.companyName) {
-              inferredCompanyName = aiAnalysis.companyName;
-            }
-            if (!inferredClauses && aiAnalysis.suggestedClauses) {
-              inferredClauses = aiAnalysis.suggestedClauses;
-            }
-            if (!inferredSignatures && aiAnalysis.suggestedSignatures) {
-              inferredSignatures = aiAnalysis.suggestedSignatures;
-            }
-          }
-        } catch (aiErr: any) {
-          console.warn('Aviso ao analisar estrutura do template via IA:', aiErr.message);
-        }
+        tables = inspection.tables;
+        placeholderMap = inspection.placeholderMap;
       }
 
       const templateName = name || (originalFileName ? originalFileName.replace(/\.docx$/i, '') : 'Template Personalizado');
       const tempId = `template-${Date.now()}`;
-      const generatedSchema = buildDefaultSchema(tempId, detectedPlaceholders || []);
+      const generatedSchema = buildDefaultSchema(tempId, detectedPlaceholders || [], tables || []);
+      if (placeholderMap) {
+        generatedSchema.placeholderMap = placeholderMap;
+      }
 
       const saved = await saveTemplateDocumentToDb({
         name: templateName,
         description: description || (structureSummary ? `Template DOCX: ${structureSummary}` : ''),
-        companyName: inferredCompanyName || 'DEPARTAMENTO DE SUPRIMENTOS',
+        companyName: companyName || 'DEPARTAMENTO DE SUPRIMENTOS',
         primaryColor: primaryColor || '1F3864',
         tableHeaderBg: tableHeaderBg || 'EEEEEE',
         fontFamily: fontFamily || 'Arial',
-        preAtaIntro: inferredPreAtaIntro || '',
-        standardClauses: inferredClauses || '',
-        signatures: inferredSignatures || '',
+        preAtaIntro: preAtaIntro || '',
+        standardClauses: standardClauses || '',
+        signatures: signatures || '',
         docxBlobBase64,
         originalFileName,
         fileSizeBytes,
         detectedPlaceholders,
         structureSummary,
-        detectedSections,
-        tableSchemas,
-        templateType,
+        tables,
         rawTextPreview,
         schema: generatedSchema
       });
@@ -412,7 +620,7 @@ async function startServer() {
   });
 
   // Schema Editor Endpoint
-  app.put('/api/admin/templates/:id/schema', async (req, res) => {
+  app.put('/api/admin/templates/:id/schema', requireAuth, requireAdmin, async (req, res) => {
     try {
       const parsedSchema = TemplateSchemaZod.safeParse(req.body.schema);
       if (!parsedSchema.success) {
@@ -439,14 +647,14 @@ async function startServer() {
   });
 
   // Test Render Endpoint
-  app.post('/api/admin/templates/:id/test-render', async (req, res) => {
+  app.post('/api/admin/templates/:id/test-render', requireAuth, requireAdmin, async (req, res) => {
     try {
       const dummyAbertura = {
-        obraCodigo: 'OBRA-0099',
-        obraNome: 'Empreendimento Teste de Verificação',
-        fornecedor: 'FORNECEDOR CERTIFICADO LTDA',
+        obraCodigo: '590',
+        obraNome: 'HOSPITAL SABARA',
+        fornecedor: 'ALPHA PINTURA LTDA',
         assunto: 'Reunião de Alinhamento Técnico',
-        servico: 'Estruturas e Fundações',
+        servico: 'Pintura Especializada',
         rm: 'RM-001',
         cot: 'COT-001'
       };
@@ -479,7 +687,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/admin/templates/:id/rollback', async (req, res) => {
+  app.post('/api/admin/templates/:id/rollback', requireAuth, requireAdmin, async (req, res) => {
     try {
       const template = await rollbackTemplateInDb(req.params.id);
       res.json({ success: true, template });
@@ -488,7 +696,7 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/admin/templates/:id', async (req, res) => {
+  app.delete('/api/admin/templates/:id', requireAuth, requireAdmin, async (req, res) => {
     try {
       const { id } = req.params;
       const result = await deleteTemplateFromDb(id);
@@ -499,7 +707,7 @@ async function startServer() {
     }
   });
 
-  app.get('/api/admin/templates/:id/download', async (req, res) => {
+  app.get('/api/admin/templates/:id/download', requireAuth, requireAdmin, async (req, res) => {
     try {
       const { versions } = await getTemplateVersionsFromDb();
       const target = versions.find(v => v.id === req.params.id);
@@ -515,7 +723,6 @@ async function startServer() {
         return res.send(fileBuffer);
       }
 
-      // Default JSON download if no binary docx was uploaded
       res.setHeader('Content-Type', 'application/json');
       res.setHeader('Content-Disposition', `attachment; filename=template-v${target.version}-${target.name.replace(/\s+/g, '_')}.json`);
       res.send(JSON.stringify(target, null, 2));
@@ -529,7 +736,7 @@ async function startServer() {
     res.status(404).json({ error: `Rota de API não encontrada: ${req.method} ${req.path}` });
   });
 
-  // Global error handler for API routes (Multer errors, payload errors, etc.)
+  // Global error handler for API routes
   app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
     if (req.path.startsWith('/api')) {
       console.error('API Error:', err);

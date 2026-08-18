@@ -1,3 +1,14 @@
+export interface UserProfile {
+  uid: string;
+  email: string;
+  displayName: string;
+  role: 'member' | 'admin';
+  domain: string;
+  provider?: string;
+  isActive?: boolean;
+  mustChangePassword?: boolean;
+}
+
 export interface AberturaData {
   obraCodigo: string;
   obraNome: string;
@@ -8,6 +19,19 @@ export interface AberturaData {
   cot: string;
 }
 
+export type Estilo = 'normal' | 'forte' | 'alerta' | 'ressalva';
+
+export interface Run {
+  t: string;
+  estilo?: Estilo;
+}
+
+export interface Bloco {
+  tipo: 'titulo' | 'paragrafo' | 'bullet';
+  nivel?: 0 | 1 | 2;
+  runs: Run[];
+}
+
 export interface TopicCard {
   id: string;
   title: string;
@@ -16,6 +40,7 @@ export interface TopicCard {
   pontoAtencao: string;
   perguntaFornecedor: string;
   source: string;
+  blocos?: Bloco[];
 }
 
 export interface AnalysisResult {
@@ -30,9 +55,18 @@ export interface Divergence {
   source: string;
 }
 
+export interface FinalAtaItem {
+  num?: string;
+  titulo?: string;
+  descricao?: string;
+  responsavel?: string;
+  prazo?: string;
+  blocos?: Bloco[];
+}
+
 export interface FinalAtaData {
-  agreedItems: string[];
-  pendingItems: string[];
+  agreedItems: (string | FinalAtaItem)[];
+  pendingItems: (string | FinalAtaItem)[];
   notes: string;
 }
 
@@ -114,9 +148,21 @@ export interface TemplateField {
   renderOptions?: TemplateFieldRenderOptions;
 }
 
+export interface LoopColumn {
+  cellIndex: number;
+  key: string;
+  label: string;
+}
+
 export interface TemplateLoop {
   tag: string;
   description: string;
+  tableIndex?: number;
+  prototypeRowIndex?: number;
+  columns?: LoopColumn[];
+  removeOtherRows?: boolean;
+  basePPr?: string;
+  baseRPr?: string;
   itemFields: TemplateField[];
   minItems?: number;
   allowEmpty?: boolean;
@@ -127,6 +173,8 @@ export interface TemplateSchema {
   templateId: string;
   fields: TemplateField[];
   loops: TemplateLoop[];
+  placeholderMap?: Record<string, string>;
+  removerRealceAmarelo?: boolean;
   createdAt: string;
   updatedAt: string;
   generatedBy: 'system' | 'ai' | 'admin';
@@ -143,6 +191,18 @@ export interface TableSchema {
   name: string;
   columns: string[];
   sampleRowTags: string[];
+}
+
+export interface TableInspectionRow {
+  index: number;
+  cells: string[];
+}
+
+export interface TableInspection {
+  index: number;
+  rowCount: number;
+  columnCount: number;
+  rows: TableInspectionRow[];
 }
 
 export interface TemplateConfig {
@@ -168,6 +228,7 @@ export interface TemplateConfig {
   structureSummary?: string;
   detectedSections?: DetectedSection[];
   tableSchemas?: TableSchema[];
+  tables?: TableInspection[];
   templateType?: string;
   rawTextPreview?: string;
   isActive?: boolean;
@@ -179,5 +240,8 @@ export interface AuditLog {
   level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG';
   category: 'AI' | 'DOCX' | 'CHECKLIST' | 'PROPOSAL' | 'SYSTEM' | 'AUTH' | 'ADMIN';
   message: string;
+  actorUid?: string;
+  actorEmail?: string;
+  actorRole?: 'admin' | 'member';
   details?: any;
 }

@@ -1,6 +1,54 @@
-import { collection, doc, setDoc, getDoc, getDocs, deleteDoc, serverTimestamp, query, orderBy, limit as firestoreLimit } from 'firebase/firestore';
-import { db } from './firebase';
+import { collection, doc, setDoc, getDoc, getDocs, deleteDoc, serverTimestamp, query, where, orderBy } from 'firebase/firestore';
+import { db, auth } from './firebase';
 import { AppState, AuditLog } from '../types';
+import { safeFetchJson } from '../utils/api';
+
+export enum OperationType {
+  CREATE = 'create',
+  UPDATE = 'update',
+  DELETE = 'delete',
+  LIST = 'list',
+  GET = 'get',
+  WRITE = 'write',
+}
+
+export interface FirestoreErrorInfo {
+  error: string;
+  operationType: OperationType;
+  path: string | null;
+  authInfo: {
+    userId?: string | null;
+    email?: string | null;
+    emailVerified?: boolean | null;
+    isAnonymous?: boolean | null;
+    tenantId?: string | null;
+    providerInfo?: {
+      providerId?: string | null;
+      email?: string | null;
+    }[];
+  };
+}
+
+export function handleFirestoreError(error: unknown, operationType: OperationType, path: string | null): never {
+  const errInfo: FirestoreErrorInfo = {
+    error: error instanceof Error ? error.message : String(error),
+    authInfo: {
+      userId: auth.currentUser?.uid,
+      email: auth.currentUser?.email,
+      emailVerified: auth.currentUser?.emailVerified,
+      isAnonymous: auth.currentUser?.isAnonymous,
+      tenantId: auth.currentUser?.tenantId,
+      providerInfo: auth.currentUser?.providerData?.map(provider => ({
+        providerId: provider.providerId,
+        email: provider.email,
+      })) || []
+    },
+    operationType,
+    path
+  };
+  console.error('Firestore Error: ', JSON.stringify(errInfo));
+  throw new Error(JSON.stringify(errInfo));
+}
 
 /**
  * Deeply sanitizes an object for Firestore to remove any `undefined` properties,
@@ -39,6 +87,11 @@ export const saveMeeting = async (state: AppState): Promise<string> => {
     status = 'PRE_ATA_GENERATED';
   }
 
+  const currentUser = auth.currentUser;
+  const ownerUid = currentUser?.uid || 'anonymous';
+  const ownerEmail = currentUser?.email || '';
+  const ownerName = currentUser?.displayName || currentUser?.email?.split('@')[0] || '';
+
   const payload = {
     id: meetingId,
     obraCodigo: state.abertura?.obraCodigo || '',
@@ -55,12 +108,15 @@ export const saveMeeting = async (state: AppState): Promise<string> => {
     finalAtaData: state.finalAtaData || null,
     sonnetAnalysis: state.sonnetAnalysis || '',
     status: status,
+    ownerUid,
+    ownerEmail,
+    ownerName,
     updatedAt: serverTimestamp(),
   };
 
   const cleanFirestorePayload = sanitizeForFirestore(payload);
 
-  // 1. Primary: Save to Firestore
+  // 1. Primary: Save to Firestore directly
   try {
     await setDoc(meetingRef, cleanFirestorePayload, { merge: true });
   } catch (firestoreError) {
@@ -69,9 +125,8 @@ export const saveMeeting = async (state: AppState): Promise<string> => {
 
   // 2. Secondary: Sync with Backend Storage API
   try {
-    await fetch('/api/meetings', {
+    await safeFetchJson('/api/meetings', {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         ...cleanFirestorePayload,
         updatedAt: new Date().toISOString(),
@@ -90,6 +145,8 @@ export const saveMeeting = async (state: AppState): Promise<string> => {
       level: 'INFO',
       category: 'SYSTEM',
       message: `Reunião persistida: Obra ${state.abertura?.obraCodigo || 'S/N'} (${state.abertura?.fornecedor || 'Fornecedor N/A'}) [${status}]`,
+      actorUid: ownerUid,
+      actorEmail: ownerEmail,
       details: {
         meetingId,
         step: state.step,
@@ -109,36 +166,38 @@ export const saveMeeting = async (state: AppState): Promise<string> => {
 export const loadMeetings = async (searchTerm?: string): Promise<any[]> => {
   const mergedMap = new Map<string, any>();
 
-  // 1. Load from Backend Server
+  // 1. Load from Backend Server (isolated per ownerUid for members, all for admin)
   try {
     const url = searchTerm ? `/api/meetings?search=${encodeURIComponent(searchTerm)}` : '/api/meetings';
-    const res = await fetch(url);
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data.meetings)) {
-        data.meetings.forEach((m: any) => {
-          if (m.id) mergedMap.set(m.id, m);
-        });
-      }
+    const data = await safeFetchJson(url);
+    if (data && Array.isArray(data.meetings)) {
+      data.meetings.forEach((m: any) => {
+        if (m.id) mergedMap.set(m.id, m);
+      });
     }
   } catch (apiErr) {
     console.warn("Aviso ao buscar reuniões do backend:", apiErr);
   }
 
-  // 2. Load from Firestore
+  // 2. Load from Firestore if user is logged in
   try {
-    const colRef = collection(db, 'meetings');
-    const snapshot = await getDocs(colRef);
-    snapshot.docs.forEach(docSnap => {
-      const docData = docSnap.data();
-      const existing = mergedMap.get(docSnap.id);
-      mergedMap.set(docSnap.id, {
-        id: docSnap.id,
-        ...existing,
-        ...docData,
+    const currentUser = auth.currentUser;
+    if (currentUser) {
+      const colRef = collection(db, 'meetings');
+      // If we can query, read snapshot
+      const snapshot = await getDocs(colRef);
+      snapshot.docs.forEach(docSnap => {
+        const docData = docSnap.data();
+        const existing = mergedMap.get(docSnap.id);
+        mergedMap.set(docSnap.id, {
+          id: docSnap.id,
+          ...existing,
+          ...docData,
+        });
       });
-    });
+    }
   } catch (firestoreErr) {
+    // Firestore rules might block cross-user queries, which is expected
     console.warn("Aviso ao buscar reuniões do Firestore:", firestoreErr);
   }
 
@@ -153,7 +212,9 @@ export const loadMeetings = async (searchTerm?: string): Promise<any[]> => {
       (m.obraNome && String(m.obraNome).toLowerCase().includes(term)) ||
       (m.fornecedor && String(m.fornecedor).toLowerCase().includes(term)) ||
       (m.assunto && String(m.assunto).toLowerCase().includes(term)) ||
-      (m.servico && String(m.servico).toLowerCase().includes(term))
+      (m.servico && String(m.servico).toLowerCase().includes(term)) ||
+      (m.ownerName && String(m.ownerName).toLowerCase().includes(term)) ||
+      (m.ownerEmail && String(m.ownerEmail).toLowerCase().includes(term))
     );
   }
 
@@ -182,11 +243,8 @@ export const loadMeeting = async (id: string): Promise<AppState | null> => {
   // 2. Try Backend API
   if (!data) {
     try {
-      const res = await fetch(`/api/meetings/${id}`);
-      if (res.ok) {
-        const json = await res.json();
-        data = json.meeting;
-      }
+      const json = await safeFetchJson(`/api/meetings/${id}`);
+      data = json.meeting;
     } catch (apiErr) {
       console.warn("Aviso ao buscar reunião na API:", apiErr);
     }
@@ -234,7 +292,7 @@ export const deleteMeeting = async (id: string): Promise<void> => {
 
   // Delete from Backend API
   try {
-    await fetch(`/api/meetings/${id}`, {
+    await safeFetchJson(`/api/meetings/${id}`, {
       method: 'DELETE',
     });
   } catch (err) {
@@ -244,13 +302,11 @@ export const deleteMeeting = async (id: string): Promise<void> => {
 
 // ================= AUDIT LOGS FIRESTORE PERSISTENCE =================
 
-/**
- * Persist a single audit log entry directly into Firestore
- */
 export const saveAuditLogInFirestore = async (entry: AuditLog): Promise<void> => {
   try {
     const logId = entry.id || `log-${Date.now()}-${Math.random().toString(36).substring(2, 6)}`;
     const logRef = doc(db, 'logs', logId);
+    const currentUser = auth.currentUser;
     
     const payload = sanitizeForFirestore({
       id: logId,
@@ -258,6 +314,8 @@ export const saveAuditLogInFirestore = async (entry: AuditLog): Promise<void> =>
       level: entry.level || 'INFO',
       category: entry.category || 'SYSTEM',
       message: entry.message || '',
+      actorUid: entry.actorUid || currentUser?.uid || null,
+      actorEmail: entry.actorEmail || currentUser?.email || null,
       details: entry.details || null,
     });
 
@@ -267,9 +325,6 @@ export const saveAuditLogInFirestore = async (entry: AuditLog): Promise<void> =>
   }
 };
 
-/**
- * Persist a list of logs in Firestore (batch/parallel)
- */
 export const saveAuditLogsBatchInFirestore = async (entries: AuditLog[]): Promise<void> => {
   if (!entries || entries.length === 0) return;
   try {
@@ -281,9 +336,6 @@ export const saveAuditLogsBatchInFirestore = async (entries: AuditLog[]): Promis
   }
 };
 
-/**
- * Load audit logs directly from Firestore
- */
 export const loadAuditLogsFromFirestore = async (limitCount: number = 200): Promise<AuditLog[]> => {
   try {
     const colRef = collection(db, 'logs');
@@ -298,11 +350,13 @@ export const loadAuditLogsFromFirestore = async (limitCount: number = 200): Prom
         level: data.level || 'INFO',
         category: data.category || 'SYSTEM',
         message: data.message || '',
+        actorUid: data.actorUid || undefined,
+        actorEmail: data.actorEmail || undefined,
+        actorRole: data.actorRole || undefined,
         details: data.details || undefined,
       });
     });
 
-    // Sort descending by timestamp
     return list.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, limitCount);
   } catch (err) {
     console.warn('Aviso ao carregar logs de auditoria do Firestore:', err);
@@ -310,9 +364,6 @@ export const loadAuditLogsFromFirestore = async (limitCount: number = 200): Prom
   }
 };
 
-/**
- * Clear all audit logs stored in Firestore
- */
 export const clearAuditLogsFromFirestore = async (): Promise<void> => {
   try {
     const colRef = collection(db, 'logs');
@@ -324,36 +375,29 @@ export const clearAuditLogsFromFirestore = async (): Promise<void> => {
   }
 };
 
-/**
- * Synchronize audit logs between Backend Server and Firestore
- */
 export const syncAuditLogsWithFirestore = async (limitCount: number = 200): Promise<AuditLog[]> => {
   const mergedMap = new Map<string, AuditLog>();
 
-  // 1. Fetch from Firestore first (source of permanent truth)
+  // 1. Fetch from Firestore
   const firestoreLogs = await loadAuditLogsFromFirestore(limitCount);
   firestoreLogs.forEach(log => {
     if (log.id) mergedMap.set(log.id, log);
   });
 
-  // 2. Fetch from Backend in-memory API
+  // 2. Fetch from Backend API
   try {
-    const res = await fetch(`/api/admin/logs?limit=${limitCount}`);
-    if (res.ok) {
-      const data = await res.json();
-      if (Array.isArray(data.logs)) {
-        const unsavedToFirestore: AuditLog[] = [];
-        data.logs.forEach((log: AuditLog) => {
-          if (log.id && !mergedMap.has(log.id)) {
-            mergedMap.set(log.id, log);
-            unsavedToFirestore.push(log);
-          }
-        });
-
-        // Persist newly discovered server memory logs into Firestore
-        if (unsavedToFirestore.length > 0) {
-          saveAuditLogsBatchInFirestore(unsavedToFirestore).catch(() => {});
+    const data = await safeFetchJson(`/api/admin/logs?limit=${limitCount}`);
+    if (data && Array.isArray(data.logs)) {
+      const unsavedToFirestore: AuditLog[] = [];
+      data.logs.forEach((log: AuditLog) => {
+        if (log.id && !mergedMap.has(log.id)) {
+          mergedMap.set(log.id, log);
+          unsavedToFirestore.push(log);
         }
+      });
+
+      if (unsavedToFirestore.length > 0) {
+        saveAuditLogsBatchInFirestore(unsavedToFirestore).catch(() => {});
       }
     }
   } catch (apiErr) {
@@ -363,4 +407,3 @@ export const syncAuditLogsWithFirestore = async (limitCount: number = 200): Prom
   const allLogs = Array.from(mergedMap.values());
   return allLogs.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()).slice(0, limitCount);
 };
-

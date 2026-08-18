@@ -1,7 +1,9 @@
 import { useState, useEffect } from 'react';
-import { AppState } from '../types';
-import { FileDown, ArrowRight, Loader2, CheckCircle2, AlertTriangle, UploadCloud, FileText } from 'lucide-react';
+import { AppState, AberturaData, AnalysisResult, Divergence } from '../types';
+import { FileDown, ArrowRight, Loader2, CheckCircle2, AlertTriangle, UploadCloud, FileText, Sparkles, Eye } from 'lucide-react';
 import { TemplateWarningModal } from './TemplateWarningModal';
+import { PreAtaValidationModal } from './PreAtaValidationModal';
+import { safeFetchJson, safeFetchBlob } from '../utils/api';
 
 interface Props {
   state: AppState;
@@ -15,12 +17,12 @@ export function Step4PreAta({ state, updateState, onNavigateToTemplates }: Props
   const [hasTemplate, setHasTemplate] = useState<boolean | null>(null);
   const [activeTemplateName, setActiveTemplateName] = useState<string>('');
   const [isWarningModalOpen, setIsWarningModalOpen] = useState(false);
+  const [isValidatingModalOpen, setIsValidatingModalOpen] = useState(false);
 
   const checkTemplateStatus = async () => {
     try {
-      const res = await fetch('/api/admin/templates');
-      const data = await res.json();
-      if (res.ok) {
+      const data = await safeFetchJson('/api/admin/templates');
+      if (data) {
         setHasTemplate(Boolean(data.hasTemplate));
         setActiveTemplateName(data.activeTemplate?.name || data.activeTemplate?.originalFileName || '');
       }
@@ -33,57 +35,58 @@ export function Step4PreAta({ state, updateState, onNavigateToTemplates }: Props
     checkTemplateStatus();
   }, []);
 
-  const generateDocx = async () => {
+  const handleOpenValidation = () => {
     if (hasTemplate === false) {
       setIsWarningModalOpen(true);
       return;
     }
+    setIsValidatingModalOpen(true);
+  };
 
+  const handleSaveAndGenerate = async (updatedData: {
+    abertura: AberturaData | null;
+    analysisResult: AnalysisResult | null;
+    divergences: Divergence[];
+  }) => {
     setLoading(true);
     setError('');
     
     try {
-      const res = await fetch('/api/generate-pre-ata', {
+      // Update global state with any tweaks made in the validation modal
+      updateState({
+        abertura: updatedData.abertura,
+        analysisResult: updatedData.analysisResult,
+        divergences: updatedData.divergences
+      });
+
+      const blob = await safeFetchBlob('/api/generate-pre-ata', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          abertura: state.abertura,
-          analysisResult: state.analysisResult,
-          divergences: state.divergences
+          abertura: updatedData.abertura,
+          analysisResult: updatedData.analysisResult,
+          divergences: updatedData.divergences
         })
       });
       
-      if (!res.ok) {
-        const text = await res.text();
-        let errMsg = 'Falha ao gerar o documento DOCX da Pré-Ata';
-        try {
-          const jsonErr = JSON.parse(text);
-          if (jsonErr?.error) {
-            errMsg = jsonErr.error;
-            if (errMsg.includes('Template DOCX') || errMsg.includes('template')) {
-              setIsWarningModalOpen(true);
-            }
-          }
-        } catch {
-          // not json
-        }
-        throw new Error(errMsg);
-      }
-      
       // Handle file download
-      const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
-      a.download = `Pre-Ata_${state.abertura?.obraCodigo || 'Reuniao'}.docx`;
+      a.download = `Pre-Ata_${updatedData.abertura?.obraCodigo || 'Reuniao'}.docx`;
       document.body.appendChild(a);
       a.click();
       a.remove();
       window.URL.revokeObjectURL(url);
       
       updateState({ preAtaGenerated: true });
+      setIsValidatingModalOpen(false);
     } catch (err: any) {
-      setError(err.message || 'Erro ao gerar Pré-Ata');
+      const errMsg = err.message || 'Erro ao gerar Pré-Ata';
+      if (errMsg.includes('Template DOCX') || errMsg.includes('template')) {
+        setIsWarningModalOpen(true);
+      }
+      setError(errMsg);
     } finally {
       setLoading(false);
     }
@@ -133,10 +136,10 @@ export function Step4PreAta({ state, updateState, onNavigateToTemplates }: Props
       )}
 
       <div className="bg-white border border-slate-200 rounded-xl p-8 text-center space-y-6 shadow-sm">
-        <div className="max-w-md mx-auto space-y-4">
+        <div className="max-w-xl mx-auto space-y-4">
           <div className="bg-slate-50 border border-slate-200 rounded-xl p-6">
             <FileDown className="mx-auto h-12 w-12 text-blue-500 mb-4" />
-            <h3 className="text-lg font-bold text-slate-800">Gerar Documento (.docx)</h3>
+            <h3 className="text-lg font-bold text-slate-800">Validação e Geração do Documento (.docx)</h3>
             <p className="text-sm text-slate-500 mt-2">
               O documento preencherá os dados da obra, o resumo executivo, a análise de aderência e todas as divergências diretamente no template oficial salvo, com <strong>pontos de atenção e orientações de negociação destacados em vermelho</strong>.
             </p>
@@ -146,7 +149,7 @@ export function Step4PreAta({ state, updateState, onNavigateToTemplates }: Props
             <div className="text-left bg-red-50/50 border border-red-200 rounded-lg p-4 space-y-2">
               <p className="text-xs font-bold text-red-700 uppercase tracking-wider flex items-center gap-1.5">
                 <span className="inline-block w-2 h-2 rounded-full bg-red-600 animate-pulse"></span>
-                Pontos de Atenção Mapeados para o Documento:
+                Pontos de Atenção Mapeados ({state.analysisResult.topics.filter(t => t.pontoAtencao && t.pontoAtencao !== 'N/A' && t.pontoAtencao !== 'Nenhum').length}):
               </p>
               <ul className="text-xs space-y-1 text-slate-700 max-h-40 overflow-y-auto pr-1">
                 {state.analysisResult.topics
@@ -169,13 +172,16 @@ export function Step4PreAta({ state, updateState, onNavigateToTemplates }: Props
             </div>
           )}
 
-          <button
-            onClick={generateDocx}
-            disabled={loading}
-            className="w-full flex items-center justify-center gap-2 px-6 py-3 text-xs font-bold text-white bg-blue-600 rounded hover:bg-blue-700 uppercase tracking-tight shadow-lg shadow-blue-200 disabled:bg-slate-300 disabled:text-slate-500 disabled:shadow-none transition-colors"
-          >
-            {loading ? <><Loader2 size={18} className="animate-spin" /> Gerando com Template...</> : 'Baixar Pré-Ata (.docx)'}
-          </button>
+          <div className="flex flex-col sm:flex-row items-center justify-center gap-3 pt-2">
+            <button
+              onClick={handleOpenValidation}
+              disabled={loading}
+              className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 text-xs font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700 uppercase tracking-tight shadow-lg shadow-blue-200 disabled:bg-slate-300 disabled:text-slate-500 disabled:shadow-none transition-all"
+            >
+              <Eye size={16} />
+              Validar e Gerar Pré-Ata (.docx)
+            </button>
+          </div>
         </div>
       </div>
 
@@ -188,6 +194,18 @@ export function Step4PreAta({ state, updateState, onNavigateToTemplates }: Props
           <ArrowRight size={18} />
         </button>
       </div>
+
+      {/* Pre-Ata Validation Modal */}
+      <PreAtaValidationModal
+        isOpen={isValidatingModalOpen}
+        onClose={() => setIsValidatingModalOpen(false)}
+        abertura={state.abertura}
+        analysisResult={state.analysisResult}
+        divergences={state.divergences}
+        activeTemplateName={activeTemplateName}
+        onSaveAndGenerate={handleSaveAndGenerate}
+        loading={loading}
+      />
 
       {/* Warning Modal if no template is saved */}
       <TemplateWarningModal

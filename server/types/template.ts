@@ -21,9 +21,21 @@ export interface TemplateField {
   renderOptions?: TemplateFieldRenderOptions;
 }
 
+export interface LoopColumn {
+  cellIndex: number;
+  key: string;
+  label: string;
+}
+
 export interface TemplateLoop {
   tag: string;
   description: string;
+  tableIndex?: number;
+  prototypeRowIndex?: number;
+  columns?: LoopColumn[];
+  removeOtherRows?: boolean;
+  basePPr?: string;
+  baseRPr?: string;
   itemFields: TemplateField[];
   minItems?: number;
   allowEmpty?: boolean;
@@ -34,6 +46,8 @@ export interface TemplateSchema {
   templateId: string;
   fields: TemplateField[];
   loops: TemplateLoop[];
+  placeholderMap?: Record<string, string>;
+  removerRealceAmarelo?: boolean;
   createdAt: string;
   updatedAt: string;
   generatedBy: 'system' | 'ai' | 'admin';
@@ -50,6 +64,18 @@ export interface TableSchema {
   name: string;
   columns: string[];
   sampleRowTags: string[];
+}
+
+export interface TableInspectionRow {
+  index: number;
+  cells: string[];
+}
+
+export interface TableInspection {
+  index: number;
+  rowCount: number;
+  columnCount: number;
+  rows: TableInspectionRow[];
 }
 
 export interface TemplateDocument {
@@ -76,12 +102,43 @@ export interface TemplateDocument {
   structureSummary?: string;
   detectedSections?: DetectedSection[];
   tableSchemas?: TableSchema[];
+  tables?: TableInspection[];
   templateType?: string;
   rawTextPreview?: string;
   isActive: boolean;
 }
 
+// ================= RICH TEXT BLOCKS =================
+
+export type Estilo = 'normal' | 'forte' | 'alerta' | 'ressalva';
+
+export interface Run {
+  t: string;
+  estilo?: Estilo;
+}
+
+export interface Bloco {
+  tipo: 'titulo' | 'paragrafo' | 'bullet';
+  nivel?: 0 | 1 | 2;
+  runs: Run[];
+}
+
 // ================= ZOD RUNTIME VALIDATION SCHEMAS =================
+
+export const RunSchema = z.object({
+  t: z.string().refine((val) => !/<[a-zA-Z]/.test(val), {
+    message: 'Texto do run não pode conter tags HTML ou XML (< seguido de letra).'
+  }),
+  estilo: z.enum(['normal', 'forte', 'alerta', 'ressalva']).optional().default('normal')
+});
+
+export const BlocoSchema = z.object({
+  tipo: z.enum(['titulo', 'paragrafo', 'bullet']),
+  nivel: z.union([z.literal(0), z.literal(1), z.literal(2)]).optional(),
+  runs: z.array(RunSchema).min(1, 'Bloco deve ter ao menos um run de texto')
+});
+
+export const BlocosListSchema = z.array(BlocoSchema).max(8, 'Máximo de 8 blocos por item');
 
 export const TemplateFieldSchema = z.object({
   name: z.string().min(1),
@@ -100,10 +157,22 @@ export const TemplateFieldSchema = z.object({
   }).optional()
 });
 
+export const LoopColumnSchema = z.object({
+  cellIndex: z.number().int().nonnegative(),
+  key: z.string().min(1),
+  label: z.string().default('')
+});
+
 export const TemplateLoopSchema = z.object({
   tag: z.string().min(1),
   description: z.string().default(''),
-  itemFields: z.array(TemplateFieldSchema),
+  tableIndex: z.number().int().nonnegative().optional(),
+  prototypeRowIndex: z.number().int().nonnegative().optional(),
+  columns: z.array(LoopColumnSchema).optional(),
+  removeOtherRows: z.boolean().optional().default(false),
+  basePPr: z.string().optional(),
+  baseRPr: z.string().optional(),
+  itemFields: z.array(TemplateFieldSchema).default([]),
   minItems: z.number().optional(),
   allowEmpty: z.boolean().default(true)
 });
@@ -113,13 +182,14 @@ export const TemplateSchemaValidation = z.object({
   templateId: z.string().min(1),
   fields: z.array(TemplateFieldSchema),
   loops: z.array(TemplateLoopSchema),
+  placeholderMap: z.record(z.string(), z.string()).optional(),
+  removerRealceAmarelo: z.boolean().optional().default(true),
   createdAt: z.string().optional(),
   updatedAt: z.string().optional(),
   generatedBy: z.enum(['system', 'ai', 'admin']).optional().default('admin')
 });
 
 export const TemplateSchemaZod = TemplateSchemaValidation;
-
 
 export const AberturaValidationSchema = z.object({
   obraCodigo: z.string().min(1, 'Código da obra é obrigatório'),
@@ -138,7 +208,8 @@ export const TopicItemSchema = z.object({
   excecaoAdmitida: z.string().default('N/A'),
   pontoAtencao: z.string().default('Nenhum'),
   perguntaFornecedor: z.string().default('N/A'),
-  source: z.string().default('Check List')
+  source: z.string().default('Check List'),
+  blocos: BlocosListSchema.optional()
 });
 
 export const DivergenceItemSchema = z.object({
@@ -148,8 +219,17 @@ export const DivergenceItemSchema = z.object({
   source: z.string().default('Proposta')
 });
 
+export const FinalAtaItemSchema = z.object({
+  num: z.string().optional(),
+  titulo: z.string().optional(),
+  descricao: z.string().optional(),
+  responsavel: z.string().optional(),
+  prazo: z.string().optional(),
+  blocos: BlocosListSchema.optional()
+});
+
 export const FinalAtaValidationSchema = z.object({
-  agreedItems: z.array(z.string()).default([]),
-  pendingItems: z.array(z.string()).default([]),
+  agreedItems: z.array(z.union([z.string(), FinalAtaItemSchema])).default([]),
+  pendingItems: z.array(z.union([z.string(), FinalAtaItemSchema])).default([]),
   notes: z.string().default('')
 });

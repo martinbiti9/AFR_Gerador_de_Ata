@@ -4,6 +4,9 @@ export interface LogEntry {
   level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG';
   category: 'AI' | 'DOCX' | 'CHECKLIST' | 'PROPOSAL' | 'SYSTEM' | 'AUTH' | 'ADMIN';
   message: string;
+  actorUid?: string;
+  actorEmail?: string;
+  actorRole?: string;
   details?: any;
 }
 
@@ -14,7 +17,8 @@ export function addLog(
   level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG',
   category: 'AI' | 'DOCX' | 'CHECKLIST' | 'PROPOSAL' | 'SYSTEM' | 'AUTH' | 'ADMIN',
   message: string,
-  details?: any
+  details?: any,
+  actor?: { uid?: string; email?: string; role?: string }
 ): LogEntry {
   const entry: LogEntry = {
     id: `${Date.now()}-${Math.random().toString(36).substring(2, 7)}`,
@@ -22,6 +26,9 @@ export function addLog(
     level,
     category,
     message,
+    actorUid: actor?.uid || details?.actorUid || details?.uid,
+    actorEmail: actor?.email || details?.actorEmail || details?.email,
+    actorRole: actor?.role || details?.actorRole || details?.role,
     details: details ? (typeof details === 'object' ? JSON.parse(JSON.stringify(details)) : details) : undefined
   };
 
@@ -31,7 +38,8 @@ export function addLog(
   }
 
   // Also print to standard stdout
-  const prefix = `[${entry.timestamp}] [${entry.level}] [${entry.category}]`;
+  const actorStr = entry.actorEmail ? ` [${entry.actorEmail}]` : '';
+  const prefix = `[${entry.timestamp}] [${entry.level}] [${entry.category}]${actorStr}`;
   if (level === 'ERROR') {
     console.error(prefix, message, details || '');
   } else if (level === 'WARN') {

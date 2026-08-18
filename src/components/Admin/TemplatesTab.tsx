@@ -6,6 +6,7 @@ import {
   Layers, Table as TableIcon, Sparkles, HelpCircle, ChevronDown, ChevronUp, Play, Trash2
 } from 'lucide-react';
 import { SchemaEditorModal } from './SchemaEditorModal';
+import { safeFetchJson, safeFetchBlob } from '../../utils/api';
 
 interface Props {
   onRefreshLogs?: () => void;
@@ -36,9 +37,8 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
   const fetchTemplates = async () => {
     try {
       setLoading(true);
-      const res = await fetch('/api/admin/templates');
-      const data = await res.json();
-      if (res.ok) {
+      const data = await safeFetchJson('/api/admin/templates');
+      if (data) {
         setVersions(data.versions || []);
         setActiveId(data.activeId || '');
         if (data.activeId) {
@@ -94,24 +94,10 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
       formData.append('description', templateDescription);
       formData.append('companyName', companyName);
 
-      const res = await fetch('/api/admin/templates', {
+      const data = await safeFetchJson<{ template: { version: number } }>('/api/admin/templates', {
         method: 'POST',
         body: formData,
       });
-      
-      const text = await res.text();
-      let data: any;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        throw new Error(
-          !res.ok 
-            ? `Erro no servidor (${res.status}): Não foi possível processar o arquivo Word.`
-            : 'Formato de resposta inesperado do servidor.'
-        );
-      }
-
-      if (!res.ok) throw new Error(data.error || 'Falha ao processar e salvar nova versão do template DOCX.');
 
       setStatusMsg(`Versão v${data.template.version} do Template DOCX analisada e salva no Firestore com sucesso!`);
       setIsUploading(false);
@@ -134,17 +120,9 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
     }
 
     try {
-      const res = await fetch(`/api/admin/templates/${targetId}/rollback`, {
+      await safeFetchJson(`/api/admin/templates/${targetId}/rollback`, {
         method: 'POST',
       });
-      const text = await res.text();
-      let data: any;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        throw new Error('Formato de resposta inválido.');
-      }
-      if (!res.ok) throw new Error(data.error || 'Falha ao reverter template.');
 
       setStatusMsg(`Template v${versionNum} definido como ativo no Firestore.`);
       await fetchTemplates();
@@ -162,17 +140,9 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
     try {
       setIsDeleting(true);
       setErrorMsg('');
-      const res = await fetch(`/api/admin/templates/${targetId}`, {
+      await safeFetchJson(`/api/admin/templates/${targetId}`, {
         method: 'DELETE',
       });
-      const text = await res.text();
-      let data: any;
-      try {
-        data = JSON.parse(text);
-      } catch {
-        throw new Error('Resposta do servidor em formato inválido ao excluir template.');
-      }
-      if (!res.ok) throw new Error(data.error || 'Falha ao excluir template.');
 
       setStatusMsg(`Template v${versionNum} ("${name}") excluído com sucesso do Firestore!`);
       setTemplateToDelete(null);
@@ -190,8 +160,20 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
     setTemplateToDelete({ id: targetId, name, version: versionNum });
   };
 
-  const handleDownload = (templateId: string) => {
-    window.location.href = `/api/admin/templates/${templateId}/download`;
+  const handleDownload = async (templateId: string, templateFileName = 'template.docx') => {
+    try {
+      const blob = await safeFetchBlob(`/api/admin/templates/${templateId}/download`);
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = templateFileName.endsWith('.docx') ? templateFileName : `${templateFileName}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      alert('Erro ao baixar arquivo do template: ' + (err.message || err));
+    }
   };
 
   const activeTemplate = versions.find(v => v.id === activeId) || versions[0];

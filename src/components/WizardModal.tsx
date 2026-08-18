@@ -23,7 +23,7 @@ import {
 } from 'lucide-react';
 import { AppState, AberturaData, AnalysisResult, Divergence, FinalAtaData } from '../types';
 import { saveMeeting } from '../lib/db';
-import { safeFetchJson } from '../utils/api';
+import { safeFetchJson, safeFetchBlob } from '../utils/api';
 
 interface Props {
   isOpen: boolean;
@@ -88,15 +88,12 @@ export function WizardModal({ isOpen, onClose, state, updateState }: Props) {
         formData.append('text', transcriptText);
       }
 
-      const res = await fetch('/api/extract-metadata', {
+      const data = await safeFetchJson<{ metadata?: Partial<AberturaData> }>('/api/extract-metadata', {
         method: 'POST',
         body: formData
       });
-
-      if (!res.ok) throw new Error('Falha ao auto-extrair metadados');
-      const data = await res.json();
       
-      if (data.metadata) {
+      if (data && data.metadata) {
         const meta = data.metadata;
         const merged: AberturaData = {
           obraCodigo: meta.obraCodigo || abertura.obraCodigo || '',
@@ -149,12 +146,10 @@ export function WizardModal({ isOpen, onClose, state, updateState }: Props) {
     fileList.forEach((f: File) => formData.append('files', f));
 
     try {
-      const res = await fetch('/api/extract-text', {
+      const data = await safeFetchJson<{ text: string }>('/api/extract-text', {
         method: 'POST',
         body: formData
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Erro ao extrair texto');
       
       const newText = transcriptText ? transcriptText + '\n\n' + data.text : data.text;
       setTranscriptText(newText);
@@ -283,13 +278,11 @@ export function WizardModal({ isOpen, onClose, state, updateState }: Props) {
     setProcessingSonnet(true);
     setError('');
     try {
-      const res = await fetch('/api/process-sonnet', {
+      const data = await safeFetchJson<{ resultado: string }>('/api/process-sonnet', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ textoAta: transcriptText })
       });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || 'Erro ao processar com Sonnet 5');
       setSonnetResult(data.resultado);
       updateState({ sonnetAnalysis: data.resultado });
     } catch (err: any) {
@@ -303,7 +296,7 @@ export function WizardModal({ isOpen, onClose, state, updateState }: Props) {
   const downloadPreAta = async () => {
     setGeneratingPreAtaDocx(true);
     try {
-      const res = await fetch('/api/generate-pre-ata', {
+      const blob = await safeFetchBlob('/api/generate-pre-ata', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -312,8 +305,6 @@ export function WizardModal({ isOpen, onClose, state, updateState }: Props) {
           divergences: state.divergences
         })
       });
-      if (!res.ok) throw new Error('Erro ao gerar documento');
-      const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;
@@ -334,7 +325,7 @@ export function WizardModal({ isOpen, onClose, state, updateState }: Props) {
   const downloadFinalAta = async () => {
     setGeneratingFinalAtaDocx(true);
     try {
-      const res = await fetch('/api/generate-final-ata', {
+      const blob = await safeFetchBlob('/api/generate-final-ata', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -345,8 +336,6 @@ export function WizardModal({ isOpen, onClose, state, updateState }: Props) {
           finalAtaData: state.finalAtaData
         })
       });
-      if (!res.ok) throw new Error('Erro ao gerar documento');
-      const blob = await res.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement('a');
       a.href = url;

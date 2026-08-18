@@ -9,6 +9,22 @@ export interface VerificationReport {
   missingFields: string[];
   unresolvedPlaceholders: string[];
   extractedTextSnippet: string;
+  loopVerification?: {
+    expectedRows: number;
+    foundRows: number;
+    verified: boolean;
+  };
+}
+
+export class VerificationError extends Error {
+  public statusCode = 422;
+  public report: VerificationReport;
+
+  constructor(message: string, report: VerificationReport) {
+    super(message);
+    this.name = 'VerificationError';
+    this.report = report;
+  }
 }
 
 /**
@@ -18,7 +34,8 @@ export interface VerificationReport {
  */
 export async function verifyGeneratedDocx(
   buffer: Buffer,
-  expectedValues: Record<string, string>
+  expectedValues: Record<string, string>,
+  sampleLoopTexts: string[] = []
 ): Promise<VerificationReport> {
   const foundFields: string[] = [];
   const missingFields: string[] = [];
@@ -44,7 +61,7 @@ export async function verifyGeneratedDocx(
 
   const combinedText = `${rawText} ${xmlText}`;
 
-  // Check expected key values
+  // Check expected scalar key values
   for (const [key, expectedVal] of Object.entries(expectedValues)) {
     if (!expectedVal || expectedVal.trim() === '') continue;
     const cleanExpected = expectedVal.trim().toLowerCase();
@@ -55,6 +72,17 @@ export async function verifyGeneratedDocx(
       missingFields.push(key);
     }
   }
+
+  // Check sample loop texts in extracted content
+  let foundLoopCount = 0;
+  for (const sample of sampleLoopTexts) {
+    if (!sample || sample.trim() === '') continue;
+    if (combinedText.toLowerCase().includes(sample.trim().toLowerCase())) {
+      foundLoopCount++;
+    }
+  }
+
+  const loopVerified = sampleLoopTexts.length === 0 || foundLoopCount > 0;
 
   // Detect leftover template tokens like [CÓDIGO DA OBRA] or {obraCodigo}
   const leftoverBracketRegex = /\[(CÓDIGO DA OBRA|NOME DA OBRA|FORNECEDOR|ASSUNTO|SERVIÇO|EXTRAIR DO FIRE FLIES)\]/gi;
@@ -72,7 +100,7 @@ export async function verifyGeneratedDocx(
     }
   }
 
-  const isVerified = missingFields.length === 0 && unresolvedPlaceholders.length === 0;
+  const isVerified = missingFields.length === 0 && unresolvedPlaceholders.length === 0 && loopVerified;
 
   addLog(
     isVerified ? 'INFO' : 'WARN',
@@ -82,7 +110,9 @@ export async function verifyGeneratedDocx(
       foundFields,
       missingFields,
       unresolvedPlaceholders,
-      fileSizeBytes: buffer.length
+      fileSizeBytes: buffer.length,
+      sampleLoopTextsChecked: sampleLoopTexts.length,
+      foundLoopCount
     }
   );
 
@@ -92,6 +122,11 @@ export async function verifyGeneratedDocx(
     foundFields,
     missingFields,
     unresolvedPlaceholders,
-    extractedTextSnippet: rawText.slice(0, 500)
+    extractedTextSnippet: rawText.slice(0, 600),
+    loopVerification: {
+      expectedRows: sampleLoopTexts.length,
+      foundRows: foundLoopCount,
+      verified: loopVerified
+    }
   };
 }

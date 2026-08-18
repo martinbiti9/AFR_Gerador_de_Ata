@@ -23,6 +23,7 @@ import {
   clearAuditLogsFromFirestore, 
   saveAuditLogsBatchInFirestore 
 } from '../../lib/db';
+import { safeFetchJson } from '../../utils/api';
 
 export function LogsTab() {
   const [logs, setLogs] = useState<AuditLog[]>([]);
@@ -100,7 +101,7 @@ export function LogsTab() {
       await clearAuditLogsFromFirestore();
       
       // 2. Clear on backend
-      await fetch('/api/admin/logs', { method: 'DELETE' });
+      await safeFetchJson('/api/admin/logs', { method: 'DELETE' });
       
       setLogs([]);
       setFirestoreCount(0);

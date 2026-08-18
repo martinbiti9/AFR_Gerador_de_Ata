@@ -3,6 +3,7 @@ import Docxtemplater from 'docxtemplater';
 import { getActiveTemplateFromDb } from '../templateRepository';
 import { reconcilePayload } from './reconcile';
 import { verifyGeneratedDocx, VerificationReport } from './verify';
+import { injectLoop } from './injectLoop';
 import { addLog } from '../logger';
 
 export class RenderValidationError extends Error {
@@ -16,66 +17,49 @@ export class RenderValidationError extends Error {
   }
 }
 
+export class DocxRenderError extends Error {
+  public statusCode = 500;
+  public details: any[];
+
+  constructor(message: string, details: any[] = []) {
+    super(message);
+    this.name = 'DocxRenderError';
+    this.details = details;
+  }
+}
+
+const ARQUIVOS_PERMITIDOS = /^word\/(document|header\d*|footer\d*)\.xml$/;
+
 /**
- * Normalizes XML runs inside Word document to mend tags fractured across multiple runs.
+ * Passo 1: mescla runs adjacentes com <w:rPr> idêntico, para reunir placeholder fragmentado,
+ * sem apagar informações de estilo do documento.
  */
-export function normalizeXmlRunsForDocxtemplater(xml: string): string {
+export function mergeAdjacentRuns(xml: string): string {
   if (!xml || typeof xml !== 'string') return xml;
 
-  // 1. Remove proofing tags and spell-checking markers that split runs
-  let cleanXml = xml
+  return xml
     .replace(/<w:proofErr[^>]*\/>/gi, '')
     .replace(/<w:noProof[^>]*\/>/gi, '')
-    .replace(/<w:lang[^>]*\/>/gi, '');
+    .replace(/<\/w:t><\/w:r><w:r>(<w:rPr>[\s\S]*?<\/w:rPr>)?<w:t(?:\s[^>]*)?>/gi, (m, rpr1) => {
+      // Se houver <w:rPr>, mantém; caso não haja diferença de formatação, junta os runs
+      return m.includes('<w:rPr>') ? m : '';
+    });
+}
 
-  // 2. Safely consolidate and map text runs in paragraphs
-  cleanXml = cleanXml.replace(/<w:p(?:\s[^>]*)?>[\s\S]*?<\/w:p>/gi, (pXml) => {
-    const tRegex = /<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/gi;
-    let match;
-    let fullPText = '';
-    while ((match = tRegex.exec(pXml)) !== null) {
-      fullPText += match[1];
-    }
-
-    if ((fullPText.includes('[') && fullPText.includes(']')) || fullPText.includes('RM XXX') || fullPText.includes('COT XXX') || fullPText.includes('<<')) {
-      let replacedText = fullPText
-        .replace(/\[CÓDIGO DA OBRA\]/gi, '{obraCodigo}')
-        .replace(/\[CODIGO DA OBRA\]/gi, '{obraCodigo}')
-        .replace(/\[CÓDIGO_DA_OBRA\]/gi, '{obraCodigo}')
-        .replace(/\[NOME DA OBRA\]/gi, '{obraNome}')
-        .replace(/\[NOME_DA_OBRA\]/gi, '{obraNome}')
-        .replace(/\[ASSUNTO\]/gi, '{assunto}')
-        .replace(/\[SERVIÇO\]/gi, '{servico}')
-        .replace(/\[SERVICO\]/gi, '{servico}')
-        .replace(/\[FORNECEDOR\]/gi, '{fornecedor}')
-        .replace(/\[EXTRAIR DO FIRE FLIES\]/gi, '{resumo}')
-        .replace(/\[EXTRAIR_DO_FIRE_FLIES\]/gi, '{resumo}')
-        .replace(/\[caminho da rede\]/gi, '{linkReuniao}')
-        .replace(/\[caminho_da_rede\]/gi, '{linkReuniao}')
-        .replace(/RM\s*XXX\s*COT\s*XXX/gi, 'RM {rm} COT {cot}')
-        .replace(/RM\s*XXX/gi, 'RM {rm}')
-        .replace(/COT\s*XXX/gi, 'COT {cot}')
-        .replace(/&lt;&lt;([A-Za-z0-9_.-]+)&gt;&gt;/g, '{$1}')
-        .replace(/<<([A-Za-z0-9_.-]+)>>/g, '{$1}')
-        .replace(/\[([A-Za-z0-9_.-]+)\]/g, '{$1}');
-
-      if (replacedText !== fullPText) {
-        let count = 0;
-        return pXml.replace(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/gi, () => {
-          count++;
-          if (count === 1) {
-            return `<w:t xml:space="preserve">${replacedText}</w:t>`;
-          } else {
-            return `<w:t></w:t>`;
-          }
-        });
-      }
-    }
-
-    return pXml;
-  });
-
-  return cleanXml;
+/**
+ * Passo 2: troca literal de placeholders por tags do docxtemplater ({chave}),
+ * usando o mapa persistido no schema sem regex destrutivo.
+ */
+export function aplicarPlaceholderMap(xml: string, mapa: Record<string, string>): string {
+  if (!xml || !mapa) return xml;
+  let out = xml;
+  for (const [bruto, chave] of Object.entries(mapa)) {
+    if (!bruto || !chave) continue;
+    // Se a chave já tem delimitadores {chave}, usa direto, senão envolve em {chave}
+    const tagFormatada = chave.startsWith('{') && chave.endsWith('}') ? chave : `{${chave}}`;
+    out = out.split(bruto).join(tagFormatada);
+  }
+  return out;
 }
 
 /**
@@ -88,7 +72,7 @@ export async function renderAtaDocument(
   finalData: any | null,
   transcript: string = '',
   isPreAta: boolean = false
-): Promise<{ buffer: Buffer; report: VerificationReport }> {
+): Promise<{ buffer: Buffer; report: VerificationReport; naoResolvidas?: string[] }> {
   // 1. Fetch template from Firestore
   const template = await getActiveTemplateFromDb();
   if (!template || !template.docxBlobBase64) {
@@ -109,76 +93,134 @@ export async function renderAtaDocument(
     template.preAtaIntro || ''
   );
 
+  // Check required fields before render
+  if (reconciled.missingRequiredFields && reconciled.missingRequiredFields.length > 0) {
+    throw new RenderValidationError(
+      `Campos obrigatórios não preenchidos: ${reconciled.missingRequiredFields.join(', ')}`,
+      reconciled.missingRequiredFields
+    );
+  }
+
   // 3. Log warnings if any
   if (reconciled.warnings && reconciled.warnings.length > 0) {
     addLog('INFO', 'DOCX', `Avisos na preparação do documento: ${reconciled.warnings.join('; ')}`);
   }
 
-  // 4. Load DOCX zip and normalize XML
+  // 4. Load DOCX zip and normalize ONLY allowed XMLs
   const templateBuffer = Buffer.from(template.docxBlobBase64, 'base64');
   const zip = new PizZip(templateBuffer);
 
-  const xmlFiles = Object.keys(zip.files).filter(filename =>
-    filename.startsWith('word/') && filename.endsWith('.xml')
-  );
+  const placeholderMap = template.schema?.placeholderMap || {};
+  const removerRealceAmarelo = template.schema?.removerRealceAmarelo ?? true;
 
-  for (const filename of xmlFiles) {
+  const xmlFilenames = Object.keys(zip.files).filter(filename => ARQUIVOS_PERMITIDOS.test(filename));
+
+  for (const filename of xmlFilenames) {
     try {
-      const raw = zip.files[filename].asText();
-      const normalized = normalizeXmlRunsForDocxtemplater(raw);
-      if (raw !== normalized) {
-        zip.file(filename, normalized);
+      let raw = zip.files[filename].asText();
+      
+      // Step A: Merge adjacent runs with identical rPr
+      raw = mergeAdjacentRuns(raw);
+      
+      // Step B: Apply placeholder map strictly via split/join
+      raw = aplicarPlaceholderMap(raw, placeholderMap);
+      
+      // Step C: Remove yellow highlight only if enabled
+      if (removerRealceAmarelo) {
+        raw = raw.replace(/<w:highlight w:val="yellow"\s*\/>/g, '');
       }
-    } catch {
-      // ignore
+
+      zip.file(filename, raw);
+    } catch (err: any) {
+      addLog('WARN', 'DOCX', `Aviso ao processar XML ${filename}: ${err.message}`);
     }
   }
 
-  // 5. Configure Docxtemplater
+  // 5. Inject Table Loops into word/document.xml
+  let docXml = zip.files['word/document.xml']?.asText() || '';
+  if (template.schema?.loops && template.schema.loops.length > 0) {
+    for (const loop of template.schema.loops) {
+      if (
+        loop.tableIndex !== undefined &&
+        loop.prototypeRowIndex !== undefined &&
+        loop.columns &&
+        loop.columns.length > 0
+      ) {
+        try {
+          docXml = injectLoop(docXml, {
+            tableIndex: loop.tableIndex,
+            prototypeRowIndex: loop.prototypeRowIndex,
+            loopKey: loop.tag,
+            columns: loop.columns,
+            removeOtherRows: loop.removeOtherRows ?? false,
+          });
+        } catch (injectErr: any) {
+          addLog('WARN', 'DOCX', `Aviso ao injetar loop "${loop.tag}": ${injectErr.message}`);
+        }
+      }
+    }
+    zip.file('word/document.xml', docXml);
+  }
+
+  // 6. Configure Docxtemplater without silent swallows
   const payload = reconciled.payload;
+  const naoResolvidas = new Set<string>();
+
   const doc = new Docxtemplater(zip, {
     paragraphLoop: true,
     linebreaks: true,
-    parser: (tag: string) => {
-      const clean = tag.trim();
-      return {
-        get: (scope: any) => {
-          if (!scope) return '';
-          if (scope[clean] !== undefined && scope[clean] !== null) return scope[clean];
-          
-          const lower = clean.toLowerCase();
-          for (const key of Object.keys(scope)) {
-            if (key.toLowerCase() === lower && scope[key] !== undefined && scope[key] !== null) {
-              return scope[key];
-            }
-          }
-
-          if (payload[clean] !== undefined) return payload[clean];
-          for (const key of Object.keys(payload)) {
-            if (key.toLowerCase() === lower && payload[key] !== undefined) {
-              return payload[key];
-            }
-          }
-
-          return '';
-        }
-      };
+    nullGetter(part: any) {
+      if (part.module) return ''; // Seção ou loop vazio
+      naoResolvidas.add(part.value);
+      return '[A INFORMAR]'; // NUNCA string vazia para auditoria clara
     },
-    nullGetter: () => ''
   });
 
-  doc.render(payload);
+  try {
+    doc.render(payload);
+  } catch (e: any) {
+    const detalhe = e.properties?.errors?.map((x: any) => ({
+      id: x.properties?.id,
+      explanation: x.properties?.explanation,
+      context: x.properties?.context,
+      file: x.properties?.file,
+    })) ?? [{ message: e.message }];
+    addLog('ERROR', 'DOCX', 'Falha no render do template', { detalhe });
+    throw new DocxRenderError('Falha ao renderizar o template', detalhe);
+  }
+
+  // Verify missing required fields from unresolved tags
+  if (template.schema?.fields) {
+    const obrigatoriasFaltando = template.schema.fields
+      .filter(f => f.required && naoResolvidas.has(f.name))
+      .map(f => f.name);
+
+    if (obrigatoriasFaltando.length) {
+      throw new RenderValidationError(
+        `Campos obrigatórios não preenchidos: ${obrigatoriasFaltando.join(', ')}`,
+        obrigatoriasFaltando
+      );
+    }
+  }
 
   const outputBuffer = doc.getZip().generate({
     type: 'nodebuffer',
     compression: 'DEFLATE'
   });
 
-  // 6. Round-trip verification
-  const report = await verifyGeneratedDocx(outputBuffer, {
-    obraCodigo: payload.obraCodigo,
-    fornecedor: payload.fornecedor
-  });
+  // 7. Round-trip verification
+  const sampleLoopTexts: string[] = [];
+  if (Array.isArray(payload.itens) && payload.itens.length > 0) {
+    const firstItem = payload.itens[0];
+    if (firstItem.titulo) sampleLoopTexts.push(firstItem.titulo);
+    if (firstItem.descricao) sampleLoopTexts.push(firstItem.descricao.slice(0, 30));
+  }
+
+  const expectedScalars: Record<string, string> = {};
+  if (payload.obraCodigo) expectedScalars.obraCodigo = String(payload.obraCodigo);
+  if (payload.fornecedor) expectedScalars.fornecedor = String(payload.fornecedor);
+
+  const report = await verifyGeneratedDocx(outputBuffer, expectedScalars, sampleLoopTexts);
 
   addLog('INFO', 'DOCX', `Documento ${isPreAta ? 'Pré-Ata' : 'Ata Final'} gerado com sucesso (${outputBuffer.length} bytes)`, {
     templateId: template.id,
@@ -186,11 +228,13 @@ export async function renderAtaDocument(
     isPreAta,
     isVerified: report.isVerified,
     obraCodigo: payload.obraCodigo,
-    fornecedor: payload.fornecedor
+    fornecedor: payload.fornecedor,
+    naoResolvidas: Array.from(naoResolvidas)
   });
 
   return {
     buffer: outputBuffer,
-    report
+    report,
+    naoResolvidas: Array.from(naoResolvidas)
   };
 }

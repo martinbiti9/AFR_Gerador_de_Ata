@@ -1,16 +1,10 @@
-import { TemplateSchema, TemplateField } from '../types/template';
+import { TemplateSchema } from '../types/template';
+import { blocosParaOoxml, itemParaBlocos } from './richText';
 
 export interface ReconciledData {
   payload: Record<string, any>;
   missingRequiredFields: string[];
   warnings: string[];
-}
-
-/**
- * Normalizes string keys to lowercase alphanumeric for robust alias matching.
- */
-function normalizeKey(k: string): string {
-  return k.toLowerCase().replace(/[^a-z0-9]/g, '');
 }
 
 /**
@@ -29,61 +23,85 @@ export function reconcilePayload(
   const missingRequiredFields: string[] = [];
   const warnings: string[] = [];
 
-  const dataReuniao = new Date().toLocaleDateString('pt-BR');
-  const horaAtual = '10:30h';
-  const localReuniao = 'Online - Teams';
-  const anoAtual = new Date().getFullYear().toString();
-  const mesAtual = (new Date().getMonth() + 1).toString().padStart(2, '0');
-  const diaAtual = new Date().getDate().toString().padStart(2, '0');
+  const obraCodigo = abertura?.obraCodigo ? String(abertura.obraCodigo).trim() : '';
+  const obraNome = abertura?.obraNome ? String(abertura.obraNome).trim() : '';
+  const fornecedor = abertura?.fornecedor ? String(abertura.fornecedor).trim() : '';
+  const assunto = abertura?.assunto ? String(abertura.assunto).trim() : '';
+  const servico = abertura?.servico ? String(abertura.servico).trim() : '';
+  const rm = abertura?.rm ? String(abertura.rm).trim() : '';
+  const cot = abertura?.cot ? String(abertura.cot).trim() : '';
+  const dataReuniao = abertura?.dataReuniao || abertura?.data || '';
+  const horaReuniao = abertura?.horario || abertura?.hora || abertura?.horaAbertura || '';
+  const horaAbertura = abertura?.horaAbertura || horaReuniao || '';
+  const horaEncerramento = abertura?.horaEncerramento || '';
+  const localReuniao = abertura?.local || abertura?.localReuniao || '';
+  const linkReuniao = abertura?.linkReuniao || abertura?.link || '';
 
-  const obraCodigo = abertura?.obraCodigo ? String(abertura.obraCodigo).trim() : 'OBRA A DEFINIR';
-  const obraNome = abertura?.obraNome ? String(abertura.obraNome).trim() : 'Obra / Empreendimento';
-  const fornecedor = abertura?.fornecedor ? String(abertura.fornecedor).trim() : 'FORNECEDOR A DEFINIR';
-  const assunto = abertura?.assunto ? String(abertura.assunto).trim() : 'Reunião de Contratação e Alinhamento Técnico';
-  const servico = abertura?.servico ? String(abertura.servico).trim() : 'Serviço / Escopo Contratado';
-  const rm = abertura?.rm ? String(abertura.rm).trim() : 'S/N';
-  const cot = abertura?.cot ? String(abertura.cot).trim() : 'S/N';
+  // Get base formatting from schema loops if present
+  const mainLoop = schema?.loops?.find(l => ['itens', 'topics', 'agreeditems'].includes(l.tag.toLowerCase()));
+  const basePPr = mainLoop?.basePPr || '';
+  const baseRPr = mainLoop?.baseRPr || '';
 
-  if (!abertura?.fornecedor) {
-    warnings.push('Fornecedor não preenchido na Abertura. O documento foi preenchido com "FORNECEDOR A DEFINIR".');
-  }
-  if (!abertura?.obraCodigo) {
-    warnings.push('Código da obra não preenchido na Abertura. O documento foi preenchido com "OBRA A DEFINIR".');
-  }
-
-  // Format topics list
-  const topicsList = (analysisResult?.topics || []).map((t: any, idx: number) => {
+  // 1. Build Topics List
+  const rawTopics = analysisResult?.topics || [];
+  const topicsList = rawTopics.map((t: any, idx: number) => {
     const num = String(idx + 1).padStart(2, '0');
-    const isAtt = Boolean(t.pontoAtencao && t.pontoAtencao !== 'N/A' && t.pontoAtencao !== 'Nenhum' && t.pontoAtencao !== 'Não identificado');
+    const title = t.title || t.titulo || `Item ${idx + 1}`;
+    const regraObra = t.regraObra || t.regra || '';
+    const excecaoAdmitida = t.excecaoAdmitida || t.excecao || '';
+    const pontoAtencao = t.pontoAtencao || t.atencao || '';
+    const perguntaFornecedor = t.perguntaFornecedor || t.pergunta || '';
+    const responsavel = t.responsavel || 'Fornecedor / Engenharia';
+    const prazo = t.prazo || 'Conforme cronograma';
+
+    const blocos = t.blocos && Array.isArray(t.blocos) && t.blocos.length > 0
+      ? t.blocos
+      : itemParaBlocos(title, '', {
+          regra: regraObra,
+          excecao: excecaoAdmitida,
+          atencao: pontoAtencao,
+          pergunta: perguntaFornecedor,
+          responsavel,
+          prazo
+        });
+
+    const corpoXml = blocosParaOoxml(blocos, basePPr, baseRPr);
+
     return {
       index: idx + 1,
       num,
       item: num,
       numero: num,
-      title: t.title || `Item ${idx + 1}`,
-      titulo: t.title || `Item ${idx + 1}`,
-      assunto: t.title || `Item ${idx + 1}`,
-      regraObra: t.regraObra || 'N/A',
-      regra: t.regraObra || 'N/A',
-      excecaoAdmitida: t.excecaoAdmitida || 'N/A',
-      excecao: t.excecaoAdmitida || 'N/A',
-      pontoAtencao: t.pontoAtencao || 'Nenhum',
-      atencao: t.pontoAtencao || 'Nenhum',
-      perguntaFornecedor: t.perguntaFornecedor || 'N/A',
-      pergunta: t.perguntaFornecedor || 'N/A',
+      title,
+      titulo: title,
+      descricao: `${regraObra ? `Regra: ${regraObra}. ` : ''}${pontoAtencao ? `Atenção: ${pontoAtencao}.` : ''}`.trim(),
+      regraObra,
+      excecaoAdmitida,
+      pontoAtencao,
+      perguntaFornecedor,
       source: t.source || 'Check List',
-      origem: t.source || 'Check List',
-      isAttention: isAtt,
-      temAtencao: isAtt,
-      responsavel: 'Informativo',
-      prazo: 'Na reunião'
+      responsavel,
+      prazo,
+      blocos,
+      corpoXml,
+      '@corpoXml': corpoXml
     };
   });
 
-  // Format divergences list
-  const divergencesList = (divergences || []).map((d: any, idx: number) => {
+  // 2. Build Divergences List
+  const rawDivergences = divergences || [];
+  const divergencesList = rawDivergences.map((d: any, idx: number) => {
     const num = String(idx + 1).padStart(2, '0');
-    const sev = (d.severity || 'MEDIA').toUpperCase();
+    const sev = (d.severity || d.severidade || 'MEDIA').toUpperCase();
+    const desc = d.description || d.descricao || '';
+    const title = `Divergência [${sev}]`;
+
+    const blocos = d.blocos && Array.isArray(d.blocos) && d.blocos.length > 0
+      ? d.blocos
+      : itemParaBlocos(title, desc, { atencao: `Severidade: ${sev}`, responsavel: 'Fornecedor' });
+
+    const corpoXml = blocosParaOoxml(blocos, basePPr, baseRPr);
+
     return {
       index: idx + 1,
       num,
@@ -91,24 +109,35 @@ export function reconcilePayload(
       numero: num,
       severity: sev,
       severidade: sev,
-      description: d.description || '',
-      descricao: d.description || '',
-      texto: d.description || '',
+      description: desc,
+      descricao: desc,
+      title,
+      titulo: title,
       source: d.source || 'Proposta Comercial',
-      origem: d.source || 'Proposta Comercial',
-      isAlta: sev === 'ALTA',
-      isMedia: sev === 'MEDIA',
-      isBaixa: sev === 'BAIXA',
       responsavel: 'Fornecedor / Engenharia',
-      prazo: 'Na reunião'
+      prazo: 'Na reunião',
+      blocos,
+      corpoXml,
+      '@corpoXml': corpoXml
     };
   });
 
-  // Format agreed items
+  // 3. Build Agreed Items List
   const rawAgreed = Array.isArray(finalData?.agreedItems) ? finalData.agreedItems : [];
   const agreedList = rawAgreed.map((it: any, idx: number) => {
     const num = String(idx + 1).padStart(2, '0');
-    const textVal = typeof it === 'string' ? it : (it.text || it.title || it.descricao || '');
+    const isObj = typeof it === 'object' && it !== null;
+    const textVal = isObj ? (it.descricao || it.text || it.titulo || '') : String(it || '');
+    const titleVal = isObj && it.titulo ? it.titulo : `Item Acordado ${idx + 1}`;
+    const resp = isObj && it.responsavel ? it.responsavel : 'Informativo / Contratada';
+    const prz = isObj && it.prazo ? it.prazo : 'Conforme cronograma';
+
+    const blocos = isObj && Array.isArray(it.blocos) && it.blocos.length > 0
+      ? it.blocos
+      : itemParaBlocos(titleVal, textVal, { responsavel: resp, prazo: prz });
+
+    const corpoXml = blocosParaOoxml(blocos, basePPr, baseRPr);
+
     return {
       index: idx + 1,
       num,
@@ -117,17 +146,32 @@ export function reconcilePayload(
       text: textVal,
       texto: textVal,
       descricao: textVal,
-      title: textVal,
-      responsavel: it.responsavel || 'Informativo',
-      prazo: it.prazo || 'Conforme cronograma'
+      title: titleVal,
+      titulo: titleVal,
+      responsavel: resp,
+      prazo: prz,
+      blocos,
+      corpoXml,
+      '@corpoXml': corpoXml
     };
   });
 
-  // Format pending items
+  // 4. Build Pending Items List
   const rawPending = Array.isArray(finalData?.pendingItems) ? finalData.pendingItems : [];
   const pendingList = rawPending.map((it: any, idx: number) => {
     const num = String(idx + 1).padStart(2, '0');
-    const textVal = typeof it === 'string' ? it : (it.text || it.title || it.descricao || '');
+    const isObj = typeof it === 'object' && it !== null;
+    const textVal = isObj ? (it.descricao || it.text || it.titulo || '') : String(it || '');
+    const titleVal = isObj && it.titulo ? it.titulo : `Pendência ${idx + 1}`;
+    const resp = isObj && it.responsavel ? it.responsavel : 'Fornecedor / Engenharia';
+    const prz = isObj && it.prazo ? it.prazo : 'A definir';
+
+    const blocos = isObj && Array.isArray(it.blocos) && it.blocos.length > 0
+      ? it.blocos
+      : itemParaBlocos(titleVal, textVal, { atencao: `PENDÊNCIA: ${textVal}`, responsavel: resp, prazo: prz });
+
+    const corpoXml = blocosParaOoxml(blocos, basePPr, baseRPr);
+
     return {
       index: idx + 1,
       num,
@@ -136,20 +180,47 @@ export function reconcilePayload(
       text: textVal,
       texto: textVal,
       descricao: textVal,
-      title: textVal,
-      responsavel: it.responsavel || 'Fornecedor / Engenharia',
-      prazo: it.prazo || 'A definir'
+      title: titleVal,
+      titulo: titleVal,
+      responsavel: resp,
+      prazo: prz,
+      blocos,
+      corpoXml,
+      '@corpoXml': corpoXml
     };
   });
 
-  // Summary
+  // 5. Consolidated Master Items for the body table
+  // In Pre-Ata: topics + divergences
+  // In Final Ata: agreedItems + pendingItems (or topics if agreed is empty)
+  let masterItensList: any[] = [];
+  if (isPreAta) {
+    masterItensList = [...topicsList, ...divergencesList];
+  } else {
+    if (agreedList.length > 0 || pendingList.length > 0) {
+      masterItensList = [...agreedList, ...pendingList];
+    } else if (topicsList.length > 0) {
+      masterItensList = [...topicsList];
+    }
+  }
+
+  // Renumber master items sequentially
+  masterItensList = masterItensList.map((item, idx) => ({
+    ...item,
+    index: idx + 1,
+    num: String(idx + 1).padStart(2, '0'),
+    item: String(idx + 1).padStart(2, '0'),
+    numero: String(idx + 1).padStart(2, '0')
+  }));
+
+  // Summary notes
   const resumoTexto = isPreAta
     ? (templateIntro || 'Esta Pré-Ata contém a análise de aderência das propostas comerciais frente ao check list de obrigações da obra, identificando regras acordadas, exceções admitidas e pontos de atenção para deliberação na reunião.')
-    : (finalData?.notes || (transcript ? `Reunião realizada com alinhamento das condições técnicas e comerciais com a ${fornecedor}.` : 'Reunião de alinhamento e contratação realizada com sucesso.'));
+    : (finalData?.notes || (transcript ? `Reunião realizada com alinhamento das condições técnicas e comerciais com ${fornecedor || 'a contratada'}.` : ''));
 
-  // Plain text blocks
+  // Plain text aggregates
   const topicsText = topicsList.map((t: any) =>
-    `• [${t.item}] ${t.title}\n  - Regra da Obra: ${t.regraObra}\n  - Exceção Admitida: ${t.excecaoAdmitida}\n  - Ponto de Atenção: ${t.pontoAtencao}${isPreAta ? `\n  - Orientação: ${t.perguntaFornecedor}` : ''}`
+    `• [${t.item}] ${t.title}\n  - Regra da Obra: ${t.regraObra || 'N/A'}\n  - Exceção Admitida: ${t.excecaoAdmitida || 'N/A'}\n  - Ponto de Atenção: ${t.pontoAtencao || 'Nenhum'}`
   ).join('\n\n');
 
   const divergencesText = divergencesList.map((d: any) =>
@@ -159,103 +230,93 @@ export function reconcilePayload(
   const agreedText = agreedList.map((a: any) => `• ${a.text}`).join('\n');
   const pendingText = pendingList.map((p: any) => `• [PENDÊNCIA] ${p.text}`).join('\n');
 
-  // Master Payload
+  // Master Payload WITHOUT brackets and WITHOUT fabricated default strings
   const payload: Record<string, any> = {
     // Obra
-    obraCodigo,
-    OBRA_CODIGO: obraCodigo,
-    codigoObra: obraCodigo,
-    CODIGO_OBRA: obraCodigo,
-    codObra: obraCodigo,
-    obra: obraCodigo,
-    OBRA: obraCodigo,
-    '[CÓDIGO DA OBRA]': obraCodigo,
-    '[CODIGO DA OBRA]': obraCodigo,
-    '[CÓDIGO_DA_OBRA]': obraCodigo,
+    obraCodigo: obraCodigo || null,
+    OBRA_CODIGO: obraCodigo || null,
+    codigoObra: obraCodigo || null,
+    CODIGO_OBRA: obraCodigo || null,
+    codObra: obraCodigo || null,
+    obra: obraCodigo || null,
+    OBRA: obraCodigo || null,
 
-    obraNome,
-    OBRA_NOME: obraNome,
-    nomeObra: obraNome,
-    NOME_OBRA: obraNome,
-    empreendimento: obraNome,
-    EMPREENDIMENTO: obraNome,
-    '[NOME DA OBRA]': obraNome,
-    '[NOME_DA_OBRA]': obraNome,
+    obraNome: obraNome || null,
+    OBRA_NOME: obraNome || null,
+    nomeObra: obraNome || null,
+    NOME_OBRA: obraNome || null,
+    empreendimento: obraNome || null,
+    EMPREENDIMENTO: obraNome || null,
 
     // Fornecedor
-    fornecedor,
-    FORNECEDOR: fornecedor,
-    fornecedorNome: fornecedor,
-    razaoSocial: fornecedor,
-    RAZAO_SOCIAL: fornecedor,
-    empresa: fornecedor,
-    EMPRESA: fornecedor,
-    '[FORNECEDOR]': fornecedor,
+    fornecedor: fornecedor || null,
+    FORNECEDOR: fornecedor || null,
+    fornecedorNome: fornecedor || null,
+    razaoSocial: fornecedor || null,
+    RAZAO_SOCIAL: fornecedor || null,
+    empresa: fornecedor || null,
+    EMPRESA: fornecedor || null,
 
     // Assunto
-    assunto,
-    ASSUNTO: assunto,
-    tema: assunto,
-    TEMA: assunto,
-    '[ASSUNTO]': assunto,
+    assunto: assunto || null,
+    ASSUNTO: assunto || null,
+    tema: assunto || null,
+    TEMA: assunto || null,
 
     // Servico
-    servico,
-    SERVICO: servico,
-    SERVIÇO: servico,
-    escopo: servico,
-    ESCOPO: servico,
-    pacote: servico,
-    PACOTE: servico,
-    '[SERVIÇO]': servico,
-    '[SERVICO]': servico,
+    servico: servico || null,
+    SERVICO: servico || null,
+    SERVIÇO: servico || null,
+    escopo: servico || null,
+    ESCOPO: servico || null,
+    pacote: servico || null,
+    PACOTE: servico || null,
 
     // RM / COT
-    rm,
-    RM: rm,
-    numRM: rm,
-    cot,
-    COT: cot,
-    numCOT: cot,
-    '[RM]': rm,
-    '[COT]': cot,
+    rm: rm || null,
+    RM: rm || null,
+    numRM: rm || null,
+    cot: cot || null,
+    COT: cot || null,
+    numCOT: cot || null,
 
-    // Dates
-    dataReuniao,
-    DATA_REUNIAO: dataReuniao,
-    data: dataReuniao,
-    DATA: dataReuniao,
-    dataExtenso: `${diaAtual}/${mesAtual}/${anoAtual}`,
-    dia: diaAtual,
-    mes: mesAtual,
-    ano: anoAtual,
-    horario: horaAtual,
-    hora: horaAtual,
-    local: localReuniao,
+    // Dates / Location
+    dataReuniao: dataReuniao || null,
+    DATA_REUNIAO: dataReuniao || null,
+    data: dataReuniao || null,
+    DATA: dataReuniao || null,
+    horario: horaReuniao || null,
+    hora: horaReuniao || null,
+    horaAbertura: horaAbertura || null,
+    horaEncerramento: horaEncerramento || null,
+    local: localReuniao || null,
+    localReuniao: localReuniao || null,
+    linkReuniao: linkReuniao || null,
+    link: linkReuniao || null,
 
     // Resumo
-    resumo: resumoTexto,
-    RESUMO: resumoTexto,
-    resumoExecutivo: resumoTexto,
-    RESUMO_EXECUTIVO: resumoTexto,
-    notas: resumoTexto,
-    NOTAS: resumoTexto,
-    '[EXTRAIR DO FIRE FLIES]': resumoTexto,
-    '[EXTRAIR_DO_FIRE_FLIES]': resumoTexto,
-    '[caminho da rede]': 'https://afonsofranca.sharepoint.com/reunioes/suprimentos',
-    '[caminho_da_rede]': 'https://afonsofranca.sharepoint.com/reunioes/suprimentos',
+    resumo: resumoTexto || null,
+    RESUMO: resumoTexto || null,
+    resumoExecutivo: resumoTexto || null,
+    RESUMO_EXECUTIVO: resumoTexto || null,
+    notas: resumoTexto || null,
+    NOTAS: resumoTexto || null,
 
     // Loops
+    itens: masterItensList,
+    ITENS: masterItensList,
     topics: topicsList,
-    itens: topicsList,
+    TOPICS: topicsList,
     checklist: topicsList,
-    analiseAderencia: topicsList,
     divergences: divergencesList,
+    DIVERGENCES: divergencesList,
     divergencias: divergencesList,
     agreedItems: agreedList,
+    AGREEDITEMS: agreedList,
     itensAcordados: agreedList,
     acordos: agreedList,
     pendingItems: pendingList,
+    PENDINGITEMS: pendingList,
     pendencias: pendingList,
     itensPendentes: pendingList,
 
@@ -264,27 +325,34 @@ export function reconcilePayload(
     divergencesText,
     agreedText,
     pendingText,
-    corpoAta: isPreAta ? `${topicsText}\n\n${divergencesText}` : `${agreedText}\n\n${pendingText}\n\n${resumoTexto}`
+    corpoAta: isPreAta
+      ? `${topicsText}\n\n${divergencesText}`.trim()
+      : `${agreedText}\n\n${pendingText}\n\n${resumoTexto}`.trim()
   };
 
-  // Schema Validation & Fallbacks
+  // Schema Validation & Required Fields Check
   if (schema && Array.isArray(schema.fields)) {
     for (const field of schema.fields) {
       const val = payload[field.name];
-      if (val === undefined || val === null || String(val).trim() === '') {
-        if (field.defaultValue !== undefined && field.defaultValue !== null) {
+      const isBlank = val === undefined || val === null || String(val).trim() === '';
+
+      if (isBlank) {
+        if (field.defaultValue !== undefined && field.defaultValue !== null && String(field.defaultValue).trim() !== '') {
           payload[field.name] = field.defaultValue;
         } else if (field.required) {
-          payload[field.name] = `[${field.name.toUpperCase()}]`;
-          warnings.push(`Campo obrigatório "${field.name}" não preenchido. Substituído por [${field.name.toUpperCase()}].`);
+          missingRequiredFields.push(field.name);
         }
       }
     }
+  } else {
+    // Basic standard required checks
+    if (!obraCodigo) missingRequiredFields.push('obraCodigo');
+    if (!fornecedor) missingRequiredFields.push('fornecedor');
   }
 
   return {
     payload,
-    missingRequiredFields,
+    missingRequiredFields: Array.from(new Set(missingRequiredFields)),
     warnings
   };
 }

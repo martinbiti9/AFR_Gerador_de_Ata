@@ -11,10 +11,15 @@ import {
   Check, 
   PanelLeftClose,
   PanelLeftOpen,
-  Minus
+  Minus,
+  LogOut,
+  Shield,
+  User,
+  Sliders
 } from 'lucide-react';
 import { AfonsoFrancaLogo } from './AfonsoFrancaLogo';
 import { AppState } from '../types';
+import { useAuth } from '../contexts/AuthContext';
 
 interface SidebarProps {
   currentStep: number;
@@ -22,6 +27,7 @@ interface SidebarProps {
   onReset: () => void;
   onOpenHistory?: () => void;
   onOpenWizard?: () => void;
+  onOpenAdmin?: () => void;
   state?: AppState;
 }
 
@@ -33,7 +39,9 @@ const STEPS = [
   { id: 5, name: 'Ata Final', icon: CheckCircle2, desc: 'Deliberações & Assinatura', optional: false },
 ];
 
-export function Sidebar({ currentStep, setStep, onReset, onOpenHistory, onOpenWizard, state }: SidebarProps) {
+export function Sidebar({ currentStep, setStep, onReset, onOpenHistory, onOpenWizard, onOpenAdmin, state }: SidebarProps) {
+  const { profile, user, role, logout } = useAuth();
+
   const [isCollapsed, setIsCollapsed] = useState<boolean>(() => {
     try {
       const saved = localStorage.getItem('sidebar_collapsed');
@@ -52,9 +60,6 @@ export function Sidebar({ currentStep, setStep, onReset, onOpenHistory, onOpenWi
   }, [isCollapsed]);
 
   // ================= ACCURATE COMPLETION MEASUREMENT =================
-  // Progress is ONLY counted when a step is actually CONCLUDED, not merely entered.
-  // Step 4 (Pré-Ata) is optional and can be skipped without penalizing 100% completion.
-
   const isStep1Done = Boolean(
     (state?.abertura?.obraCodigo && state?.abertura?.fornecedor) ||
     currentStep > 1
@@ -75,15 +80,18 @@ export function Sidebar({ currentStep, setStep, onReset, onOpenHistory, onOpenWi
 
   const isStep5Done = Boolean(state?.finalAtaGenerated || state?.finalAtaData);
 
-  // Mandatory milestones: Abertura (25%), Check List (25%), Complementos (25%), Ata Final (25%)
   const mandatoryCompletedCount = [isStep1Done, isStep2Done, isStep3Done, isStep5Done].filter(Boolean).length;
   const percentage = Math.min(Math.round((mandatoryCompletedCount / 4) * 100), 100);
   const isAllCompleted = isStep5Done && isStep1Done && isStep2Done && isStep3Done;
 
+  const displayName = profile?.displayName || user?.displayName || user?.email?.split('@')[0] || 'Usuário';
+  const displayEmail = profile?.email || user?.email || '';
+  const isAdmin = role === 'admin';
+
   return (
     <aside 
       className={`bg-slate-50 text-slate-900 border-r border-slate-200 flex flex-col h-full flex-shrink-0 transition-all duration-300 ease-in-out relative select-none ${
-        isCollapsed ? 'w-[72px]' : 'w-[240px]'
+        isCollapsed ? 'w-[72px]' : 'w-[250px]'
       }`}
     >
       {/* Header with Company Logo & Collapse Toggle */}
@@ -116,6 +124,35 @@ export function Sidebar({ currentStep, setStep, onReset, onOpenHistory, onOpenWi
           {isCollapsed ? <PanelLeftOpen size={17} className="text-slate-600" /> : <PanelLeftClose size={17} />}
         </button>
       </div>
+
+      {/* User Profile Card */}
+      <div className={`border-b border-slate-200/80 bg-white/70 ${isCollapsed ? 'p-2 flex flex-col items-center' : 'px-3.5 py-2.5'}`}>
+        <div className="flex items-center gap-2.5">
+          <div className={`w-8 h-8 rounded-full flex items-center justify-center font-bold text-xs shrink-0 shadow-2xs ${
+            isAdmin ? 'bg-indigo-600 text-white' : 'bg-blue-600 text-white'
+          }`}>
+            {displayName.slice(0, 2).toUpperCase()}
+          </div>
+          {!isCollapsed && (
+            <div className="flex-1 min-w-0">
+              <div className="flex items-center justify-between gap-1">
+                <span className="text-xs font-bold text-slate-800 truncate block">
+                  {displayName}
+                </span>
+              </div>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <span className={`text-[9px] font-bold px-1.5 py-0.2 rounded uppercase tracking-wider ${
+                  isAdmin 
+                    ? 'bg-purple-100 text-purple-800 border border-purple-200' 
+                    : 'bg-blue-50 text-blue-700 border border-blue-200'
+                }`}>
+                  {isAdmin ? 'Administrador' : 'Suprimentos'}
+                </span>
+              </div>
+            </div>
+          )}
+        </div>
+      </div>
       
       {/* Wizard Fast-Track Button */}
       {onOpenWizard && (
@@ -133,7 +170,7 @@ export function Sidebar({ currentStep, setStep, onReset, onOpenHistory, onOpenWi
         </div>
       )}
 
-      {/* Visual Progress Bar Section (Measured strictly upon task conclusion) */}
+      {/* Visual Progress Bar Section */}
       <div className={`mt-2 rounded-xl bg-white border border-slate-200/80 shadow-2xs transition-all ${
         isCollapsed ? 'mx-2 p-2 flex flex-col items-center' : 'mx-3.5 px-3 py-2.5'
       }`}>
@@ -178,7 +215,6 @@ export function Sidebar({ currentStep, setStep, onReset, onOpenHistory, onOpenWi
             </div>
           </>
         ) : (
-          /* Mini Progress representation when collapsed */
           <div className="flex flex-col items-center gap-1 w-full" title={`Progresso Concluído: ${percentage}% (${mandatoryCompletedCount} de 4 etapas obrigatórias)`}>
             <span className={`text-[10px] font-extrabold ${isAllCompleted ? 'text-emerald-600' : 'text-blue-600'}`}>
               {percentage}%
@@ -205,7 +241,6 @@ export function Sidebar({ currentStep, setStep, onReset, onOpenHistory, onOpenWi
         {STEPS.map((step) => {
           const isActive = currentStep === step.id;
           
-          // Determine exact completion status per step
           let isConcluded = false;
           let isSkipped = false;
 
@@ -299,6 +334,20 @@ export function Sidebar({ currentStep, setStep, onReset, onOpenHistory, onOpenWi
             {!isCollapsed && <span>Histórico</span>}
           </button>
         )}
+
+        {isAdmin && onOpenAdmin && (
+          <button
+            onClick={onOpenAdmin}
+            title="Painel Administrativo"
+            className={`flex items-center justify-center gap-2 w-full py-2 text-xs font-bold uppercase tracking-tight text-indigo-700 bg-indigo-50/80 hover:bg-indigo-100 rounded-lg transition-colors border border-indigo-200 ${
+              isCollapsed ? 'px-0' : 'px-3'
+            }`}
+          >
+            <Shield size={14} className="shrink-0" />
+            {!isCollapsed && <span>Painel Admin</span>}
+          </button>
+        )}
+
         <button
           onClick={onReset}
           title="Iniciar Nova Reunião"
@@ -308,6 +357,17 @@ export function Sidebar({ currentStep, setStep, onReset, onOpenHistory, onOpenWi
         >
           <RefreshCw size={14} className="shrink-0" />
           {!isCollapsed && <span>Nova Reunião</span>}
+        </button>
+
+        <button
+          onClick={logout}
+          title="Sair do Sistema"
+          className={`flex items-center justify-center gap-2 w-full py-2 text-xs font-bold uppercase tracking-tight text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-colors ${
+            isCollapsed ? 'px-0' : 'px-3'
+          }`}
+        >
+          <LogOut size={14} className="shrink-0" />
+          {!isCollapsed && <span>Sair</span>}
         </button>
       </div>
     </aside>

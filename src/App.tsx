@@ -10,12 +10,18 @@ import { WizardModal } from './components/WizardModal';
 import { MetadataSuggestionModal } from './components/MetadataSuggestionModal';
 import { Chatbot } from './components/Chatbot';
 import { AdminView } from './components/Admin/AdminView';
+import { LoginView } from './components/Auth/LoginView';
+import { ChangePasswordView } from './components/Auth/ChangePasswordView';
+import { AfonsoFrancaLogo } from './components/AfonsoFrancaLogo';
+import { AuthProvider, useAuth } from './contexts/AuthContext';
 import { AppState, INITIAL_STATE, AberturaData } from './types';
 import { saveMeeting, loadMeeting } from './lib/db';
-import { CheckCircle2, Clock, Loader2, Save, Wand2 } from 'lucide-react';
+import { CheckCircle2, Loader2, Save, Wand2, Shield, LogOut, User as UserIcon } from 'lucide-react';
 
-export function App() {
-  const [isAdmin, setIsAdmin] = useState(false);
+function AppContent() {
+  const { user, profile, role, loading: authLoading, mustChangePassword, logout } = useAuth();
+
+  const [isAdminRoute, setIsAdminRoute] = useState(false);
   const [adminTab, setAdminTab] = useState<'models' | 'prompts' | 'templates' | 'logs'>('models');
   const [isHistoryOpen, setIsHistoryOpen] = useState(false);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
@@ -31,7 +37,7 @@ export function App() {
   useEffect(() => {
     const checkRoute = () => {
       const isAdm = window.location.pathname === '/admin';
-      setIsAdmin(isAdm);
+      setIsAdminRoute(isAdm);
       if (isAdm) {
         const params = new URLSearchParams(window.location.search);
         const tab = params.get('tab');
@@ -48,7 +54,12 @@ export function App() {
   const handleOpenAdmin = (tab: 'models' | 'prompts' | 'templates' | 'logs' = 'models') => {
     setAdminTab(tab);
     window.history.pushState({}, '', `/admin?tab=${tab}`);
-    setIsAdmin(true);
+    setIsAdminRoute(true);
+  };
+
+  const handleBackToApp = () => {
+    window.history.pushState({}, '', '/');
+    setIsAdminRoute(false);
   };
 
   const [state, setState] = useState<AppState>(() => {
@@ -90,6 +101,8 @@ export function App() {
 
   // Debounced auto-save on state change
   useEffect(() => {
+    if (!user || mustChangePassword) return;
+
     localStorage.setItem('ataState', JSON.stringify(state));
     
     const timeout = setTimeout(() => {
@@ -97,7 +110,7 @@ export function App() {
     }, 1500);
 
     return () => clearTimeout(timeout);
-  }, [state, persistCurrentState]);
+  }, [state, persistCurrentState, user, mustChangePassword]);
 
   const updateState = (updates: Partial<AppState>) => {
     setState(prev => {
@@ -169,7 +182,6 @@ export function App() {
   const handleMetadataDetected = (detected: Partial<AberturaData>) => {
     if (!detected) return;
     
-    // Check if meaningful metadata was found
     const hasMeaningful = Boolean(
       detected.obraCodigo?.trim() || 
       detected.fornecedor?.trim() || 
@@ -184,7 +196,6 @@ export function App() {
 
     const current = state.abertura;
     
-    // Check if any fields in abertura are empty or differ
     const hasEmptyFields = !current || 
       !current.obraCodigo?.trim() || 
       !current.fornecedor?.trim() || 
@@ -198,7 +209,6 @@ export function App() {
       (detected.obraNome && detected.obraNome !== current.obraNome);
 
     if (hasEmptyFields || isDifferent) {
-      // Merge current non-empty fields with newly detected ones
       const merged: Partial<AberturaData> = {
         obraCodigo: current?.obraCodigo || detected.obraCodigo || '',
         obraNome: current?.obraNome || detected.obraNome || '',
@@ -220,7 +230,6 @@ export function App() {
 
     updateState({ abertura: confirmed });
 
-    // Immediately persist to Firestore database with latest updated state
     try {
       setSaving(true);
       setState(prev => {
@@ -243,15 +252,40 @@ export function App() {
     }
   };
 
-  const handleBackToApp = () => {
-    window.history.pushState({}, '', '/');
-    setIsAdmin(false);
-  };
+  // 1. Loading Splash Screen with Afonso França Brand
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-slate-900 flex flex-col items-center justify-center p-6 text-white select-none">
+        <div className="bg-white p-8 rounded-2xl shadow-2xl flex flex-col items-center max-w-sm w-full border border-slate-100 animate-in fade-in zoom-in-95 duration-200">
+          <AfonsoFrancaLogo collapsed={false} alignment="center" />
+          <div className="mt-6 flex flex-col items-center gap-3">
+            <Loader2 size={28} className="animate-spin text-blue-600" />
+            <p className="text-xs font-bold text-slate-700 uppercase tracking-wider">
+              Inicializando Sessão Segura...
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
 
-  // If URL is /admin, render the full admin dashboard
-  if (isAdmin) {
+  // 2. Unauthenticated State -> Show Login View
+  if (!user || !profile) {
+    return <LoginView />;
+  }
+
+  // 3. First Access / Password Change Requirement
+  if (mustChangePassword) {
+    return <ChangePasswordView />;
+  }
+
+  // 4. Admin View Route Guard
+  if (isAdminRoute) {
     return <AdminView onBackToApp={handleBackToApp} initialTab={adminTab} />;
   }
+
+  const displayName = profile.displayName || user.displayName || user.email?.split('@')[0] || 'Usuário';
+  const isAdmin = role === 'admin';
 
   return (
     <div className="flex h-screen bg-slate-50 text-slate-900 overflow-hidden font-sans">
@@ -262,6 +296,7 @@ export function App() {
         onReset={requestReset} 
         onOpenHistory={() => setIsHistoryOpen(true)} 
         onOpenWizard={() => setIsWizardOpen(true)}
+        onOpenAdmin={isAdmin ? () => handleOpenAdmin('models') : undefined}
       />
       
       <main className="flex-1 flex flex-col overflow-hidden">
@@ -293,19 +328,21 @@ export function App() {
 
           <div className="flex items-center space-x-2">
             {/* Templates Quick Button */}
-            <button
-              onClick={() => handleOpenAdmin('templates')}
-              className="flex items-center gap-1.5 text-xs font-semibold bg-slate-100 hover:bg-blue-50 hover:text-blue-700 text-slate-700 px-3 py-1.5 rounded-lg transition-colors border border-slate-200 shadow-2xs"
-              title="Gerenciar Templates DOCX salvos no banco de dados"
-            >
-              <Save size={13} className="text-blue-600" />
-              <span className="hidden sm:inline">Templates DOCX</span>
-            </button>
+            {isAdmin && (
+              <button
+                onClick={() => handleOpenAdmin('templates')}
+                className="flex items-center gap-1.5 text-xs font-semibold bg-slate-100 hover:bg-blue-50 hover:text-blue-700 text-slate-700 px-3 py-1.5 rounded-lg transition-colors border border-slate-200 shadow-2xs cursor-pointer"
+                title="Gerenciar Templates DOCX salvos no banco de dados"
+              >
+                <Save size={13} className="text-blue-600" />
+                <span className="hidden sm:inline">Templates DOCX</span>
+              </button>
+            )}
 
             {/* Wizard Fast-Track Button in Header */}
             <button
               onClick={() => setIsWizardOpen(true)}
-              className="flex items-center gap-1.5 text-xs font-bold text-white bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 px-3.5 py-1.5 rounded-lg transition-all shadow-xs uppercase tracking-tight"
+              className="flex items-center gap-1.5 text-xs font-bold text-white bg-gradient-to-r from-blue-600 via-indigo-600 to-purple-600 hover:from-blue-700 hover:to-purple-700 px-3.5 py-1.5 rounded-lg transition-all shadow-xs uppercase tracking-tight cursor-pointer"
               title="Abrir fluxo rápido passo a passo (Wizard)"
             >
               <Wand2 size={14} className="text-yellow-300" />
@@ -316,7 +353,7 @@ export function App() {
             <button
               onClick={handleManualSave}
               disabled={saving}
-              className="flex items-center gap-1.5 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg transition-colors border border-slate-200 shadow-2xs"
+              className="flex items-center gap-1.5 text-xs font-semibold bg-slate-100 hover:bg-slate-200 text-slate-700 px-3 py-1.5 rounded-lg transition-colors border border-slate-200 shadow-2xs cursor-pointer"
               title="Salvar reunião e dados no histórico agora"
             >
               <Save size={13} className={saving ? "animate-spin text-blue-600" : "text-slate-600"} />
@@ -325,13 +362,36 @@ export function App() {
 
             <button 
               onClick={requestReset} 
-              className="text-xs font-medium text-slate-400 hover:text-red-600 px-2 py-1.5 transition-colors"
+              className="text-xs font-medium text-slate-400 hover:text-red-600 px-2 py-1.5 transition-colors cursor-pointer"
             >
               Limpar
             </button>
 
-            <div className="h-7 w-7 rounded-full bg-slate-200 border border-slate-300 flex items-center justify-center text-slate-600 text-xs font-bold ml-1">
-              JD
+            {/* User Avatar & Logout */}
+            <div className="flex items-center gap-2 pl-2 border-l border-slate-200">
+              <div 
+                className={`h-8 px-2.5 rounded-full flex items-center gap-1.5 text-xs font-bold shadow-2xs ${
+                  isAdmin ? 'bg-indigo-50 text-indigo-800 border border-indigo-200' : 'bg-slate-100 text-slate-700 border border-slate-200'
+                }`}
+                title={`Logado como ${profile.email} (${isAdmin ? 'Administrador' : 'Membro'})`}
+              >
+                <div className={`w-5 h-5 rounded-full flex items-center justify-center text-[10px] text-white font-extrabold ${
+                  isAdmin ? 'bg-indigo-600' : 'bg-blue-600'
+                }`}>
+                  {displayName.slice(0, 2).toUpperCase()}
+                </div>
+                <span className="max-w-[100px] truncate hidden md:inline">
+                  {displayName}
+                </span>
+              </div>
+
+              <button
+                onClick={logout}
+                title="Sair do sistema"
+                className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+              >
+                <LogOut size={16} />
+              </button>
             </div>
           </div>
         </header>
@@ -343,7 +403,7 @@ export function App() {
               <CheckCircle2 size={14} />
               {saveToast}
             </span>
-            <button onClick={() => setSaveToast(null)} className="text-white/80 hover:text-white">
+            <button onClick={() => setSaveToast(null)} className="text-white/80 hover:text-white cursor-pointer">
               ✕
             </button>
           </div>
@@ -426,13 +486,13 @@ export function App() {
             <div className="flex justify-end gap-3">
               <button 
                 onClick={() => setIsResetModalOpen(false)}
-                className="px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded transition-colors"
+                className="px-4 py-2 text-sm font-bold text-slate-600 hover:bg-slate-100 rounded transition-colors cursor-pointer"
               >
                 Cancelar
               </button>
               <button 
                 onClick={confirmReset}
-                className="px-4 py-2 text-sm font-bold text-white bg-red-600 hover:bg-red-700 rounded transition-colors"
+                className="px-4 py-2 text-sm font-bold text-white bg-red-600 hover:bg-red-700 rounded transition-colors cursor-pointer"
               >
                 Sim, Limpar Sessão
               </button>
@@ -443,6 +503,14 @@ export function App() {
 
       <Chatbot />
     </div>
+  );
+}
+
+export function App() {
+  return (
+    <AuthProvider>
+      <AppContent />
+    </AuthProvider>
   );
 }
 
