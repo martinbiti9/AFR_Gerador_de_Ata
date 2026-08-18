@@ -1,12 +1,13 @@
 import fs from 'fs';
 import path from 'path';
 import { addLog } from './logger';
+import { initFirebaseAdmin } from './auth';
 
 export interface ModelStageConfig {
   model: string;
   temperature: number; // 0.0 - 2.0 (Criatividade)
   topP: number; // 0.05 - 1.0 (TOP P)
-  maxOutputTokens: number; // 512 - 16384 (Tamanho de resposta)
+  maxOutputTokens: number; // 512 - 65536 (Tamanho de resposta)
   thinkingBudget: number; // 0 (Desativado / Automático), ou > 0 (Raciocínio)
 }
 
@@ -69,9 +70,10 @@ export interface TemplateConfig {
   rawTextPreview?: string;
 }
 
-// Persistent file path for templates database
+// Persistent file path for templates and configs fallback database
 const DATA_DIR = path.resolve(process.cwd(), 'server', 'data');
 const TEMPLATES_FILE = path.join(DATA_DIR, 'templates.json');
+const CONFIGS_FILE = path.join(DATA_DIR, 'admin_config.json');
 
 function ensureDataDir() {
   if (!fs.existsSync(DATA_DIR)) {
@@ -80,6 +82,15 @@ function ensureDataDir() {
     } catch (err) {
       console.error('Erro ao criar pasta data:', err);
     }
+  }
+}
+
+function getFirestoreInstance() {
+  try {
+    const { adminDb } = initFirebaseAdmin();
+    return adminDb;
+  } catch (err) {
+    return null;
   }
 }
 
@@ -111,7 +122,29 @@ function persistTemplates(versions: TemplateConfig[], activeId: string) {
   }
 }
 
-// In-Memory active stores with full parameter configurations
+function loadPersistedAdminConfigs(): { models?: AIModelsConfig; prompts?: CustomPromptsConfig } {
+  try {
+    ensureDataDir();
+    if (fs.existsSync(CONFIGS_FILE)) {
+      const raw = fs.readFileSync(CONFIGS_FILE, 'utf-8');
+      return JSON.parse(raw);
+    }
+  } catch (err) {
+    console.error('Erro ao carregar admin configs do disco:', err);
+  }
+  return {};
+}
+
+function persistAdminConfigsLocally(models: AIModelsConfig, prompts: CustomPromptsConfig) {
+  try {
+    ensureDataDir();
+    fs.writeFileSync(CONFIGS_FILE, JSON.stringify({ models, prompts, updatedAt: new Date().toISOString() }, null, 2), 'utf-8');
+  } catch (err) {
+    console.error('Erro ao salvar admin configs no disco:', err);
+  }
+}
+
+// In-Memory active stores with full parameter configurations (Maximum Tokens & Reasoning by default)
 let activeModels: AIModelsConfig = {
   checklistModel: process.env.AI_CHECKLIST_MODEL || 'gemini-3.1-pro-preview',
   proposalModel: process.env.AI_PROPOSAL_MODEL || 'gemini-3.1-pro-preview',
@@ -123,36 +156,36 @@ let activeModels: AIModelsConfig = {
     model: process.env.AI_CHECKLIST_MODEL || 'gemini-3.1-pro-preview',
     temperature: 0.1,
     topP: 0.95,
-    maxOutputTokens: 8192,
-    thinkingBudget: 2048,
+    maxOutputTokens: 65536,
+    thinkingBudget: 32768,
   },
   proposalParams: {
     model: process.env.AI_PROPOSAL_MODEL || 'gemini-3.1-pro-preview',
     temperature: 0.1,
     topP: 0.95,
-    maxOutputTokens: 8192,
-    thinkingBudget: 2048,
+    maxOutputTokens: 65536,
+    thinkingBudget: 32768,
   },
   preAtaParams: {
     model: process.env.AI_PRE_ATA_MODEL || 'gemini-3.1-pro-preview',
     temperature: 0.2,
     topP: 0.95,
-    maxOutputTokens: 8192,
-    thinkingBudget: 2048,
+    maxOutputTokens: 65536,
+    thinkingBudget: 32768,
   },
   finalAtaParams: {
     model: process.env.AI_FINAL_ATA_MODEL || 'gemini-3.1-pro-preview',
     temperature: 0.2,
     topP: 0.95,
-    maxOutputTokens: 8192,
-    thinkingBudget: 4096,
+    maxOutputTokens: 65536,
+    thinkingBudget: 32768,
   },
   chatbotParams: {
     model: process.env.AI_CHATBOT_MODEL || 'gemini-3.5-flash',
     temperature: 0.7,
     topP: 0.95,
-    maxOutputTokens: 4096,
-    thinkingBudget: 0,
+    maxOutputTokens: 16384,
+    thinkingBudget: 8192,
   },
 };
 
@@ -164,10 +197,110 @@ let activePrompts: CustomPromptsConfig = {
   chatbotInstructions: 'Você é um assistente especialista em suprimentos e atas de reunião de uma construtora. Conhece a estrutura de templates DOCX/XML e auxilia no preenchimento de termos contratuais e consulta a atas anteriores.'
 };
 
+// Initialize from local disk cache first
+const localCached = loadPersistedAdminConfigs();
+if (localCached.models) {
+  activeModels = { ...activeModels, ...localCached.models };
+}
+if (localCached.prompts) {
+  activePrompts = { ...activePrompts, ...localCached.prompts };
+}
+
 // Initialize persisted templates from database (NO mock template)
 const loadedTemplateData = loadPersistedTemplates();
 let templateVersions: TemplateConfig[] = loadedTemplateData.versions;
 let activeTemplateId: string = loadedTemplateData.activeId;
+
+/**
+ * Persists Models and Prompts directly to Firestore collection `config`
+ */
+async function saveModelsToFirestore(models: AIModelsConfig) {
+  try {
+    const db = getFirestoreInstance();
+    if (!db) return;
+    await db.collection('config').doc('ai_models').set({
+      ...models,
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+  } catch (err: any) {
+    console.warn('Aviso: Falha ao persistir ai_models no Firestore:', err.message);
+  }
+}
+
+async function savePromptsToFirestore(prompts: CustomPromptsConfig) {
+  try {
+    const db = getFirestoreInstance();
+    if (!db) return;
+    await db.collection('config').doc('custom_prompts').set({
+      ...prompts,
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+  } catch (err: any) {
+    console.warn('Aviso: Falha ao persistir custom_prompts no Firestore:', err.message);
+  }
+}
+
+/**
+ * Initializes Firestore synchronization for administration settings on server startup.
+ * If data does not exist in Firestore, performs the initial persistence seed.
+ */
+export async function initializeAdminConfigFromFirestore(): Promise<void> {
+  try {
+    const db = getFirestoreInstance();
+    if (!db) {
+      addLog('WARN', 'ADMIN', 'Firestore indisponível na inicialização, usando armazenamento local.');
+      return;
+    }
+
+    // 1. Sync AI Models config
+    const modelsDocRef = db.collection('config').doc('ai_models');
+    const modelsDocSnap = await modelsDocRef.get();
+
+    if (modelsDocSnap.exists) {
+      const remoteModels = modelsDocSnap.data() as AIModelsConfig;
+      activeModels = {
+        ...activeModels,
+        ...remoteModels,
+        checklistParams: { ...activeModels.checklistParams, ...(remoteModels.checklistParams || {}) },
+        proposalParams: { ...activeModels.proposalParams, ...(remoteModels.proposalParams || {}) },
+        preAtaParams: { ...activeModels.preAtaParams, ...(remoteModels.preAtaParams || {}) },
+        finalAtaParams: { ...activeModels.finalAtaParams, ...(remoteModels.finalAtaParams || {}) },
+        chatbotParams: { ...activeModels.chatbotParams, ...(remoteModels.chatbotParams || {}) },
+      };
+      addLog('INFO', 'ADMIN', 'Configurações de Modelos de IA e Hiperparâmetros hidratados do Firestore com sucesso.');
+    } else {
+      // First persistence seed to Firestore
+      await modelsDocRef.set({
+        ...activeModels,
+        updatedAt: new Date().toISOString(),
+      });
+      addLog('INFO', 'ADMIN', 'Primeira persistência de Modelos de IA (65k Tokens / 32k Raciocínio) gravada no Firestore com sucesso.');
+    }
+
+    // 2. Sync Custom Prompts config
+    const promptsDocRef = db.collection('config').doc('custom_prompts');
+    const promptsDocSnap = await promptsDocRef.get();
+
+    if (promptsDocSnap.exists) {
+      const remotePrompts = promptsDocSnap.data() as CustomPromptsConfig;
+      activePrompts = { ...activePrompts, ...remotePrompts };
+      addLog('INFO', 'ADMIN', 'Instruções de Prompts customizados hidratadas do Firestore com sucesso.');
+    } else {
+      // First persistence seed to Firestore
+      await promptsDocRef.set({
+        ...activePrompts,
+        updatedAt: new Date().toISOString(),
+      });
+      addLog('INFO', 'ADMIN', 'Primeira persistência de Prompts customizados gravada no Firestore com sucesso.');
+    }
+
+    // Persist to local fallback cache
+    persistAdminConfigsLocally(activeModels, activePrompts);
+
+  } catch (err: any) {
+    addLog('WARN', 'ADMIN', `Erro ao sincronizar configurações de administração no Firestore: ${err.message}`);
+  }
+}
 
 export function getActiveModels(): AIModelsConfig {
   return { ...activeModels };
@@ -214,7 +347,12 @@ export function updateActiveModels(models: Partial<AIModelsConfig>): AIModelsCon
   }
 
   activeModels = updated;
-  addLog('INFO', 'ADMIN', 'Configurações e hiperparâmetros de Modelos de IA atualizados pelo Administrador', activeModels);
+  
+  // Persist both locally and to Firestore
+  persistAdminConfigsLocally(activeModels, activePrompts);
+  saveModelsToFirestore(activeModels);
+
+  addLog('INFO', 'ADMIN', 'Configurações e hiperparâmetros de Modelos de IA atualizados e salvos no Firestore', activeModels);
   return { ...activeModels };
 }
 
@@ -225,7 +363,12 @@ export const getStoredPrompts = getActivePrompts;
 
 export function updateActivePrompts(prompts: Partial<CustomPromptsConfig>): CustomPromptsConfig {
   activePrompts = { ...activePrompts, ...prompts };
-  addLog('INFO', 'ADMIN', 'Instruções de Prompt personalizadas atualizadas pelo Administrador', activePrompts);
+  
+  // Persist both locally and to Firestore
+  persistAdminConfigsLocally(activeModels, activePrompts);
+  savePromptsToFirestore(activePrompts);
+
+  addLog('INFO', 'ADMIN', 'Instruções de Prompt personalizadas atualizadas e salvas no Firestore', activePrompts);
   return { ...activePrompts };
 }
 
@@ -266,7 +409,6 @@ export function createNewTemplateVersion(template: Omit<TemplateConfig, 'id' | '
   };
 
   templateVersions.unshift(newEntry);
-  // Keep only up to 10 versions in memory and disk, with guaranteed last 3 accessible
   if (templateVersions.length > 10) {
     templateVersions = templateVersions.slice(0, 10);
   }

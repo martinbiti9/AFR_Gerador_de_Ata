@@ -1,19 +1,31 @@
 import React, { useState } from 'react';
-import { AberturaData, FinalAtaData, FinalAtaItem } from '../types';
+import { 
+  AberturaData, 
+  FinalAtaData, 
+  FinalAtaItem, 
+  ParticipanteItem, 
+  ValoresComerciais, 
+  PrazosCronograma,
+  TopicCard
+} from '../types';
 import { 
   X, 
   FileDown, 
   CheckCircle2, 
-  Edit3, 
+  AlertTriangle, 
   Building2, 
-  Calendar, 
-  User, 
   Plus, 
   Trash2, 
   FileText, 
-  MessageSquareText,
-  Loader2,
-  Sparkles,
+  Sparkles, 
+  Loader2, 
+  Users, 
+  DollarSign, 
+  Clock, 
+  ListOrdered, 
+  HelpCircle, 
+  Calendar, 
+  CheckSquare, 
   AlertCircle
 } from 'lucide-react';
 
@@ -21,86 +33,179 @@ interface Props {
   isOpen: boolean;
   onClose: () => void;
   abertura: AberturaData | null;
-  draftData: FinalAtaData;
+  finalData: FinalAtaData | null;
   activeTemplateName?: string;
   onSaveAndGenerate: (updatedData: {
     abertura: AberturaData | null;
-    finalAtaData: FinalAtaData;
+    finalData: FinalAtaData;
   }) => Promise<void>;
   loading: boolean;
-}
-
-function normalizeItem(item: string | FinalAtaItem, index: number, defaultResp: string): FinalAtaItem {
-  if (typeof item === 'object' && item !== null) {
-    return {
-      num: item.num || String(index + 1).padStart(2, '0'),
-      titulo: item.titulo || `Item ${index + 1}`,
-      descricao: item.descricao || (item as any).text || item.titulo || '',
-      responsavel: item.responsavel || defaultResp,
-      prazo: item.prazo || 'Conforme cronograma',
-      blocos: item.blocos
-    };
-  }
-
-  const str = String(item || '').trim();
-  return {
-    num: String(index + 1).padStart(2, '0'),
-    titulo: str.length > 50 ? `${str.slice(0, 47)}...` : (str || `Item ${index + 1}`),
-    descricao: str,
-    responsavel: defaultResp,
-    prazo: 'Conforme cronograma'
-  };
 }
 
 export function FinalAtaValidationModal({
   isOpen,
   onClose,
   abertura: initialAbertura,
-  draftData: initialDraftData,
+  finalData: initialFinalData,
   activeTemplateName = '',
   onSaveAndGenerate,
   loading
 }: Props) {
-  const [abertura, setAbertura] = useState<AberturaData>(
-    initialAbertura || {
-      obraCodigo: '',
-      obraNome: '',
-      fornecedor: '',
-      assunto: '',
-      servico: '',
-      rm: '',
-      cot: ''
+  const [abertura, setAbertura] = useState<AberturaData>(() => ({
+    obraCodigo: initialAbertura?.obraCodigo || '0590',
+    obraNome: initialAbertura?.obraNome || 'Hospital Sabará',
+    fornecedor: initialAbertura?.fornecedor || 'Construmódulo Sistemas Internos Ltda.',
+    assunto: initialAbertura?.assunto || 'REUNIÃO DE Checklist de Contratação e Condições Gerais de Fornecimento',
+    servico: initialAbertura?.servico || 'Drywall, forros e divisórias internas',
+    rm: initialAbertura?.rm || '982366',
+    cot: initialAbertura?.cot || 'COT-590-095',
+    ataNumero: initialAbertura?.ataNumero || '01',
+    dataReuniao: initialAbertura?.dataReuniao || '09/01/2025',
+    horario: initialAbertura?.horario || '10:30h',
+    local: initialAbertura?.local || 'Online - Teams',
+    linkReuniao: initialAbertura?.linkReuniao || '',
+    folha: initialAbertura?.folha || '02',
+    resumoExecutivo: initialAbertura?.resumoExecutivo || 'A reunião consolidou com sucesso o fechamento comercial e técnico para a execução do escopo.',
+    participantes: initialAbertura?.participantes?.length ? initialAbertura.participantes : [
+      {
+        id: 'p-1',
+        nome: 'Thais Louise Barroso',
+        cargoDepto: 'SUPRIMENTOS',
+        empresa: 'Afonso França',
+        email: 'thais.barroso@afonsofranca.com.br',
+        visto: 'Visto'
+      }
+    ],
+    valoresComerciais: initialAbertura?.valoresComerciais || {
+      valorTotal: 'R$ 2.782.400,00',
+      valorServicos: '',
+      valorIndustrializacao: '',
+      valorVendaMercantil: '',
+      valorLocacao: '',
+      valorFretes: '',
+      valorGerenciamento: '',
+      valorFaturamentoDireto: 'Mesma condição de pagamento da contratação inicial',
+      sinalMobilizacao: 'Via recibo ou NF? Como será descontado',
+      condicaoPagamento: '35% Projeto; 35% contra o aviso de liberação do material; 30% 14 dias após o aviso; pagamento dias 10, 20 ou 30 exclusivamente via crédito em conta.',
+      retencaoGarantia: '5% sobre o valor total da contratação. Liberação 180 dias após o Termo de Encerramento Definitivo e entrega integral da documentação.',
+      riscoSacado: 'Risco sacado a 120 dias – aplicável apenas ao faturamento da Afonso França. Taxa a.m. de 1,311%.',
+      reajuste: 'Fixo por 12 meses / fixo até o término da prestação dos serviços.'
+    },
+    prazosCronograma: initialAbertura?.prazosCronograma || {
+      mobilizacao: 'Início da mobilização de colaboradores conforme alinhado',
+      elaboracaoProjeto: 'xx dias após aprovação do pedido',
+      aprovacaoProjeto: 'xx dias após envio do projeto',
+      entregaMaterial: 'dias a partir do pedido',
+      medidasDefinitivas: 'dias após o envio do pedido',
+      fabricacao: 'xx dias após aprovação do projeto',
+      execucao: 'xx dias após mobilização',
+      comissionamento: 'Conforme cronograma',
+      operacaoAssistida: 'Conforme cronograma'
     }
+  }));
+
+  const parseToStructuredItems = (items: (string | FinalAtaItem)[]): FinalAtaItem[] => {
+    return items.map((it, idx) => {
+      if (typeof it === 'string') {
+        return {
+          num: String(idx + 1),
+          titulo: `Item ${idx + 1}`,
+          descricao: it,
+          responsavel: 'Informativo / Contratada',
+          prazo: 'Conforme cronograma'
+        };
+      }
+      return {
+        num: it.num || String(idx + 1),
+        titulo: it.titulo || `Item ${idx + 1}`,
+        descricao: it.descricao || '',
+        responsavel: it.responsavel || 'Informativo / Contratada',
+        prazo: it.prazo || 'Conforme cronograma'
+      };
+    });
+  };
+
+  const [agreedItems, setAgreedItems] = useState<FinalAtaItem[]>(() =>
+    parseToStructuredItems(initialFinalData?.agreedItems || [])
   );
+  const [pendingItems, setPendingItems] = useState<FinalAtaItem[]>(() =>
+    parseToStructuredItems(initialFinalData?.pendingItems || [])
+  );
+  const [notes, setNotes] = useState<string>(initialFinalData?.notes || '');
+  const [activeTab, setActiveTab] = useState<'agreed' | 'pending' | 'header' | 'resumo' | 'commercial' | 'prazos'>('agreed');
 
-  const [agreedItems, setAgreedItems] = useState<FinalAtaItem[]>([]);
-  const [pendingItems, setPendingItems] = useState<FinalAtaItem[]>([]);
-  const [notes, setNotes] = useState<string>('');
-  const [activeTab, setActiveTab] = useState<'agreed' | 'pending' | 'notes' | 'header'>('agreed');
-
-  // Synchronize when modal opens
   React.useEffect(() => {
     if (isOpen) {
-      if (initialAbertura) setAbertura(initialAbertura);
-      const defaultResp = initialAbertura?.fornecedor || 'Contratada';
-      
-      const normAgreed = (initialDraftData?.agreedItems || []).map((it, idx) => 
-        normalizeItem(it, idx, defaultResp)
-      );
-      setAgreedItems(normAgreed);
-
-      const normPending = (initialDraftData?.pendingItems || []).map((it, idx) => 
-        normalizeItem(it, idx, 'Fornecedor / Engenharia')
-      );
-      setPendingItems(normPending);
-
-      setNotes(initialDraftData?.notes || '');
+      if (initialAbertura) {
+        setAbertura(prev => ({
+          ...prev,
+          ...initialAbertura,
+          participantes: initialAbertura.participantes?.length ? initialAbertura.participantes : prev.participantes,
+          valoresComerciais: { ...prev.valoresComerciais, ...(initialAbertura.valoresComerciais || {}) },
+          prazosCronograma: { ...prev.prazosCronograma, ...(initialAbertura.prazosCronograma || {}) }
+        }));
+      }
+      if (initialFinalData) {
+        setAgreedItems(parseToStructuredItems(initialFinalData.agreedItems || []));
+        setPendingItems(parseToStructuredItems(initialFinalData.pendingItems || []));
+        setNotes(initialFinalData.notes || '');
+      }
     }
-  }, [isOpen, initialAbertura, initialDraftData]);
+  }, [isOpen, initialAbertura, initialFinalData]);
 
   if (!isOpen) return null;
 
-  const updateAgreed = (index: number, field: keyof FinalAtaItem, value: any) => {
+  const updateAbertura = (field: keyof AberturaData, value: any) => {
+    setAbertura(prev => ({ ...prev, [field]: value }));
+  };
+
+  const updateValores = (field: keyof ValoresComerciais, value: string) => {
+    setAbertura(prev => ({
+      ...prev,
+      valoresComerciais: {
+        ...(prev.valoresComerciais || {}),
+        [field]: value
+      }
+    }));
+  };
+
+  const updatePrazos = (field: keyof PrazosCronograma, value: string) => {
+    setAbertura(prev => ({
+      ...prev,
+      prazosCronograma: {
+        ...(prev.prazosCronograma || {}),
+        [field]: value
+      }
+    }));
+  };
+
+  const addParticipante = () => {
+    const newP: ParticipanteItem = {
+      id: `p-${(abertura.participantes || []).length + 1}`,
+      nome: '',
+      cargoDepto: '',
+      empresa: '',
+      email: '',
+      visto: ''
+    };
+    setAbertura(prev => ({
+      ...prev,
+      participantes: [...(prev.participantes || []), newP]
+    }));
+  };
+
+  const updateParticipante = (index: number, field: keyof ParticipanteItem, value: string) => {
+    const list = [...(abertura.participantes || [])];
+    list[index] = { ...list[index], [field]: value };
+    setAbertura(prev => ({ ...prev, participantes: list }));
+  };
+
+  const removeParticipante = (index: number) => {
+    const list = (abertura.participantes || []).filter((_, idx) => idx !== index);
+    setAbertura(prev => ({ ...prev, participantes: list }));
+  };
+
+  const updateAgreed = (index: number, field: keyof FinalAtaItem, value: string) => {
     const updated = [...agreedItems];
     updated[index] = { ...updated[index], [field]: value };
     setAgreedItems(updated);
@@ -115,16 +220,16 @@ export function FinalAtaValidationModal({
     setAgreedItems([
       ...agreedItems,
       {
-        num: String(newIdx).padStart(2, '0'),
-        titulo: 'Nova Deliberação Acordada',
-        descricao: 'Texto detalhado do acordo firmado na reunião...',
-        responsavel: abertura.fornecedor || 'Contratada',
+        num: String(newIdx),
+        titulo: `Item Acordado ${newIdx}`,
+        descricao: 'Condição técnica ou comercial alinhada e aprovada durante a reunião...',
+        responsavel: 'Informativo / Contratada',
         prazo: 'Conforme cronograma'
       }
     ]);
   };
 
-  const updatePending = (index: number, field: keyof FinalAtaItem, value: any) => {
+  const updatePending = (index: number, field: keyof FinalAtaItem, value: string) => {
     const updated = [...pendingItems];
     updated[index] = { ...updated[index], [field]: value };
     setPendingItems(updated);
@@ -139,11 +244,11 @@ export function FinalAtaValidationModal({
     setPendingItems([
       ...pendingItems,
       {
-        num: String(newIdx).padStart(2, '0'),
-        titulo: 'Nova Pendência de Documento / Prazo',
-        descricao: 'Obrigação ou entrega pendente a ser realizada...',
-        responsavel: abertura.fornecedor || 'Fornecedor / Engenharia',
-        prazo: 'A definir'
+        num: String(newIdx),
+        titulo: `Pendência ${newIdx}`,
+        descricao: 'Ação pendente, aprovação necessária ou documento a enviar com prazo estipulado...',
+        responsavel: 'Fornecedor / Suprimentos',
+        prazo: 'Até data estipulada'
       }
     ]);
   };
@@ -151,7 +256,7 @@ export function FinalAtaValidationModal({
   const handleConfirm = async () => {
     await onSaveAndGenerate({
       abertura,
-      finalAtaData: {
+      finalData: {
         agreedItems,
         pendingItems,
         notes
@@ -160,23 +265,23 @@ export function FinalAtaValidationModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-xs animate-in fade-in">
-      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-5xl max-h-[92vh] flex flex-col overflow-hidden animate-in zoom-in-95">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs animate-in fade-in">
+      <div className="bg-white rounded-2xl shadow-2xl border border-slate-200 w-full max-w-6xl max-h-[94vh] flex flex-col overflow-hidden animate-in zoom-in-95">
         {/* Header */}
-        <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800">
+        <div className="px-6 py-4 bg-slate-900 text-white flex items-center justify-between border-b border-slate-800 shrink-0">
           <div className="flex items-center gap-3">
-            <div className="p-2 bg-emerald-600/30 border border-emerald-400/40 rounded-xl text-emerald-300">
-              <CheckCircle2 size={20} />
+            <div className="p-2.5 bg-emerald-600/30 border border-emerald-400/40 rounded-xl text-emerald-300">
+              <FileCheck2Icon />
             </div>
             <div>
               <h2 className="text-base font-bold flex items-center gap-2">
-                Validação de Conteúdo da Ata Final
-                <span className="text-[11px] font-normal px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
-                  Validação Prévia ao DOCX
+                Validação de Conteúdo da Ata Final (Template DOCX)
+                <span className="text-[10px] uppercase font-bold tracking-wider px-2.5 py-0.5 rounded-full bg-emerald-500/20 text-emerald-300 border border-emerald-400/30">
+                  Estrutura Afonso França
                 </span>
               </h2>
               <p className="text-xs text-slate-400">
-                Revise os acordos, prazos e pendências antes da compilação no Template {activeTemplateName ? `("${activeTemplateName}")` : ''}.
+                Revise os itens acordados, pendências em vermelho, dados da reunião e valores antes de gerar o DOCX final.
               </p>
             </div>
           </div>
@@ -191,371 +296,767 @@ export function FinalAtaValidationModal({
         </div>
 
         {/* Navigation Tabs */}
-        <div className="flex items-center justify-between px-6 bg-slate-50 border-b border-slate-200">
-          <div className="flex gap-2">
-            <button
-              type="button"
-              onClick={() => setActiveTab('agreed')}
-              className={`px-4 py-3 text-xs font-bold border-b-2 flex items-center gap-2 transition-all ${
-                activeTab === 'agreed'
-                  ? 'border-emerald-600 text-emerald-700 bg-white shadow-2xs'
-                  : 'border-transparent text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <CheckCircle2 size={15} className={activeTab === 'agreed' ? 'text-emerald-600' : 'text-slate-400'} />
-              Itens Acordados / Deliberações ({agreedItems.length})
-            </button>
+        <div className="flex border-b border-slate-200 bg-slate-50 px-6 gap-2 shrink-0 overflow-x-auto text-xs font-bold uppercase tracking-wider text-slate-600">
+          <button
+            type="button"
+            onClick={() => setActiveTab('agreed')}
+            className={`py-3 px-3 border-b-2 flex items-center gap-2 whitespace-nowrap transition-colors ${
+              activeTab === 'agreed'
+                ? 'border-emerald-600 text-emerald-700 bg-white'
+                : 'border-transparent hover:text-slate-900'
+            }`}
+          >
+            <CheckSquare size={15} className="text-emerald-600" />
+            1. Itens Acordados ({agreedItems.length})
+          </button>
 
-            <button
-              type="button"
-              onClick={() => setActiveTab('pending')}
-              className={`px-4 py-3 text-xs font-bold border-b-2 flex items-center gap-2 transition-all ${
-                activeTab === 'pending'
-                  ? 'border-red-600 text-red-600 bg-white shadow-2xs'
-                  : 'border-transparent text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Edit3 size={15} className={activeTab === 'pending' ? 'text-red-600' : 'text-slate-400'} />
-              Pendências e Prazos ({pendingItems.length})
-            </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('pending')}
+            className={`py-3 px-3 border-b-2 flex items-center gap-2 whitespace-nowrap transition-colors ${
+              activeTab === 'pending'
+                ? 'border-red-600 text-red-700 bg-white'
+                : 'border-transparent hover:text-slate-900'
+            }`}
+          >
+            <AlertCircle size={15} className="text-red-500" />
+            2. Pendências Críticas ({pendingItems.length})
+          </button>
 
-            <button
-              type="button"
-              onClick={() => setActiveTab('notes')}
-              className={`px-4 py-3 text-xs font-bold border-b-2 flex items-center gap-2 transition-all ${
-                activeTab === 'notes'
-                  ? 'border-blue-600 text-blue-600 bg-white shadow-2xs'
-                  : 'border-transparent text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <MessageSquareText size={15} className={activeTab === 'notes' ? 'text-blue-600' : 'text-slate-400'} />
-              Resumo Executivo
-            </button>
+          <button
+            type="button"
+            onClick={() => setActiveTab('header')}
+            className={`py-3 px-3 border-b-2 flex items-center gap-2 whitespace-nowrap transition-colors ${
+              activeTab === 'header'
+                ? 'border-blue-600 text-blue-700 bg-white'
+                : 'border-transparent hover:text-slate-900'
+            }`}
+          >
+            <Building2 size={15} />
+            3. Cabeçalho & Participantes
+          </button>
 
-            <button
-              type="button"
-              onClick={() => setActiveTab('header')}
-              className={`px-4 py-3 text-xs font-bold border-b-2 flex items-center gap-2 transition-all ${
-                activeTab === 'header'
-                  ? 'border-blue-600 text-blue-600 bg-white shadow-2xs'
-                  : 'border-transparent text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <Building2 size={15} className={activeTab === 'header' ? 'text-blue-600' : 'text-slate-400'} />
-              Dados da Obra
-            </button>
-          </div>
+          <button
+            type="button"
+            onClick={() => setActiveTab('resumo')}
+            className={`py-3 px-3 border-b-2 flex items-center gap-2 whitespace-nowrap transition-colors ${
+              activeTab === 'resumo'
+                ? 'border-blue-600 text-blue-700 bg-white'
+                : 'border-transparent hover:text-slate-900'
+            }`}
+          >
+            <FileText size={15} />
+            4. Resumo Executivo
+          </button>
 
-          <div className="text-[11px] text-slate-500 hidden sm:block">
-            {pendingItems.length > 0 ? (
-              <span className="text-red-600 font-semibold">{pendingItems.length} pendências serão destacadas em vermelho</span>
-            ) : (
-              <span className="text-emerald-700 font-semibold">Sem pendências abertas</span>
-            )}
-          </div>
+          <button
+            type="button"
+            onClick={() => setActiveTab('commercial')}
+            className={`py-3 px-3 border-b-2 flex items-center gap-2 whitespace-nowrap transition-colors ${
+              activeTab === 'commercial'
+                ? 'border-blue-600 text-blue-700 bg-white'
+                : 'border-transparent hover:text-slate-900'
+            }`}
+          >
+            <DollarSign size={15} />
+            5. Valores & Condições
+          </button>
+
+          <button
+            type="button"
+            onClick={() => setActiveTab('prazos')}
+            className={`py-3 px-3 border-b-2 flex items-center gap-2 whitespace-nowrap transition-colors ${
+              activeTab === 'prazos'
+                ? 'border-blue-600 text-blue-700 bg-white'
+                : 'border-transparent hover:text-slate-900'
+            }`}
+          >
+            <Clock size={15} />
+            6. Cronograma & Prazos
+          </button>
         </div>
 
-        {/* Content Body */}
-        <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-slate-50/50">
+        {/* Modal Scrollable Body */}
+        <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50 space-y-6">
           {/* TAB 1: ITENS ACORDADOS */}
           {activeTab === 'agreed' && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between bg-emerald-50 border border-emerald-200 rounded-xl p-3.5 text-xs text-emerald-900">
-                <div className="flex items-center gap-2">
-                  <Sparkles size={16} className="text-emerald-600 shrink-0" />
-                  <span>
-                    Deliberações formais que serão inseridas na tabela principal do template DOCX com numeração sequencial.
-                  </span>
+            <div className="space-y-4 animate-in fade-in">
+              <div className="flex items-center justify-between bg-white p-4 rounded-xl border border-slate-200 shadow-2xs">
+                <div>
+                  <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                    <CheckSquare size={16} className="text-emerald-600" />
+                    Itens Deliberados e Acordados ({agreedItems.length})
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Cláusulas, alinhamentos e responsabilidades consolidados durante a reunião de fechamento.
+                  </p>
                 </div>
                 <button
                   type="button"
                   onClick={addAgreed}
-                  className="flex items-center gap-1 px-3 py-1.5 bg-emerald-700 text-white rounded-lg font-bold hover:bg-emerald-800 transition-colors shrink-0 shadow-xs"
+                  className="flex items-center gap-1.5 text-xs font-bold text-emerald-800 bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 px-3.5 py-2 rounded-lg transition-colors shadow-2xs"
                 >
-                  <Plus size={14} />
-                  Adicionar Deliberação
+                  <Plus size={14} /> Adicionar Item Acordado
                 </button>
               </div>
 
               <div className="space-y-3">
-                {agreedItems.length === 0 ? (
-                  <div className="text-center py-12 bg-white rounded-xl border border-dashed border-slate-300 text-slate-400 text-xs">
-                    Nenhum item de acordo registrado. Clique em "+ Adicionar Deliberação" para inserir.
-                  </div>
-                ) : (
-                  agreedItems.map((item, idx) => (
-                    <div
-                      key={`modal-agreed-${idx}`}
-                      className="bg-white border border-slate-200 rounded-xl p-4 shadow-2xs space-y-3 hover:border-emerald-300 transition-colors"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-2 flex-1">
-                          <span className="text-xs font-mono font-bold bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded">
-                            #{item.num || String(idx + 1).padStart(2, '0')}
-                          </span>
-                          <input
-                            type="text"
-                            value={item.titulo || ''}
-                            onChange={(e) => updateAgreed(idx, 'titulo', e.target.value)}
-                            placeholder="Título do Acordo ou Assunto..."
-                            className="flex-1 font-bold text-xs text-slate-800 bg-transparent border-b border-transparent hover:border-slate-300 focus:border-emerald-500 focus:outline-none px-1 py-0.5"
-                          />
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => removeAgreed(idx)}
-                          className="text-slate-400 hover:text-red-500 p-1 rounded transition-colors"
-                          title="Remover deliberação"
-                        >
-                          <Trash2 size={15} />
-                        </button>
+                {agreedItems.map((item, idx) => (
+                  <div key={idx} className="bg-white border border-slate-200 rounded-xl p-4 shadow-2xs space-y-3">
+                    <div className="flex items-center justify-between gap-2 border-b border-slate-100 pb-2">
+                      <div className="flex items-center gap-2 flex-1">
+                        <input
+                          type="text"
+                          className="w-12 bg-emerald-50 border border-emerald-200 rounded p-1 text-xs font-bold text-emerald-800 text-center"
+                          value={item.num || String(idx + 1)}
+                          onChange={(e) => updateAgreed(idx, 'num', e.target.value)}
+                          title="Número do Item"
+                        />
+                        <input
+                          type="text"
+                          className="flex-1 bg-slate-50 border border-slate-200 rounded p-1.5 text-xs font-bold text-slate-800"
+                          value={item.titulo || ''}
+                          onChange={(e) => updateAgreed(idx, 'titulo', e.target.value)}
+                          placeholder="Título do Item Acordado"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removeAgreed(idx)}
+                        className="text-slate-400 hover:text-red-600 p-1.5 rounded transition-colors"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+
+                    <div className="space-y-2 text-xs">
+                      <div>
+                        <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
+                          Descrição / Deliberação Acordada
+                        </label>
+                        <textarea
+                          rows={2}
+                          className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-xs text-slate-800"
+                          value={item.descricao || ''}
+                          onChange={(e) => updateAgreed(idx, 'descricao', e.target.value)}
+                        />
                       </div>
 
-                      <textarea
-                        value={item.descricao || ''}
-                        onChange={(e) => updateAgreed(idx, 'descricao', e.target.value)}
-                        rows={2}
-                        className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2.5 text-xs text-slate-800 focus:bg-white focus:border-emerald-500 focus:outline-none resize-y"
-                        placeholder="Texto claro e conclusivo do que foi deliberado na reunião..."
-                      />
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs pt-1 border-t border-slate-100">
-                        <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5">
-                          <User size={13} className="text-slate-400 shrink-0" />
-                          <div className="flex-1">
-                            <span className="text-[10px] text-slate-400 block leading-tight">Responsável:</span>
-                            <input
-                              type="text"
-                              value={item.responsavel || ''}
-                              onChange={(e) => updateAgreed(idx, 'responsavel', e.target.value)}
-                              className="w-full text-xs text-slate-700 bg-transparent focus:outline-none font-medium"
-                              placeholder="Nome ou Empresa do Responsável"
-                            />
-                          </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
+                            Responsável
+                          </label>
+                          <input
+                            type="text"
+                            className="w-full bg-slate-50 border border-slate-200 rounded p-1.5 text-xs text-slate-800"
+                            value={item.responsavel || ''}
+                            onChange={(e) => updateAgreed(idx, 'responsavel', e.target.value)}
+                          />
                         </div>
-
-                        <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5">
-                          <Calendar size={13} className="text-slate-400 shrink-0" />
-                          <div className="flex-1">
-                            <span className="text-[10px] text-slate-400 block leading-tight">Prazo:</span>
-                            <input
-                              type="text"
-                              value={item.prazo || ''}
-                              onChange={(e) => updateAgreed(idx, 'prazo', e.target.value)}
-                              className="w-full text-xs text-slate-700 bg-transparent focus:outline-none font-medium"
-                              placeholder="Prazo acordado"
-                            />
-                          </div>
+                        <div>
+                          <label className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
+                            Prazo
+                          </label>
+                          <input
+                            type="text"
+                            className="w-full bg-slate-50 border border-slate-200 rounded p-1.5 text-xs text-slate-800"
+                            value={item.prazo || ''}
+                            onChange={(e) => updateAgreed(idx, 'prazo', e.target.value)}
+                          />
                         </div>
                       </div>
                     </div>
-                  ))
-                )}
+                  </div>
+                ))}
               </div>
             </div>
           )}
 
-          {/* TAB 2: PENDÊNCIAS E PRAZOS */}
+          {/* TAB 2: PENDÊNCIAS CRÍTICAS */}
           {activeTab === 'pending' && (
-            <div className="space-y-4">
-              <div className="flex items-center justify-between bg-red-50/80 border border-red-200 rounded-xl p-3.5 text-xs text-red-900">
-                <div className="flex items-center gap-2">
-                  <AlertCircle size={16} className="text-red-600 shrink-0" />
-                  <span>
-                    Pendências e prazos críticos. <strong>Todos os itens desta seção receberão destaque em cor vermelha no documento DOCX final.</strong>
-                  </span>
+            <div className="space-y-4 animate-in fade-in">
+              <div className="flex items-center justify-between bg-white p-4 rounded-xl border border-slate-200 shadow-2xs">
+                <div>
+                  <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                    <AlertCircle size={16} className="text-red-600" />
+                    Pendências e Ações Críticas (Destaque em Vermelho no DOCX) ({pendingItems.length})
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Ações condicionantes para início das atividades que requerem acompanhamento estrito de prazos e responsáveis.
+                  </p>
                 </div>
                 <button
                   type="button"
                   onClick={addPending}
-                  className="flex items-center gap-1 px-3 py-1.5 bg-red-600 text-white rounded-lg font-bold hover:bg-red-700 transition-colors shrink-0 shadow-xs"
+                  className="flex items-center gap-1.5 text-xs font-bold text-red-800 bg-red-50 hover:bg-red-100 border border-red-200 px-3.5 py-2 rounded-lg transition-colors shadow-2xs"
                 >
-                  <Plus size={14} />
-                  Adicionar Pendência
+                  <Plus size={14} /> Adicionar Pendência
                 </button>
               </div>
 
               <div className="space-y-3">
-                {pendingItems.length === 0 ? (
-                  <div className="text-center py-12 bg-white rounded-xl border border-dashed border-red-200 text-slate-400 text-xs">
-                    Nenhuma pendência pendente. Clique em "+ Adicionar Pendência" caso haja documentos ou entregas a cobrar.
-                  </div>
-                ) : (
-                  pendingItems.map((item, idx) => (
-                    <div
-                      key={`modal-pending-${idx}`}
-                      className="bg-white border border-red-200 rounded-xl p-4 shadow-2xs space-y-3 hover:border-red-400 transition-colors"
-                    >
-                      <div className="flex items-center justify-between gap-3">
-                        <div className="flex items-center gap-2 flex-1">
-                          <span className="text-xs font-mono font-bold bg-red-100 text-red-800 px-2 py-0.5 rounded">
-                            #{item.num || String(idx + 1).padStart(2, '0')}
-                          </span>
-                          <input
-                            type="text"
-                            value={item.titulo || ''}
-                            onChange={(e) => updatePending(idx, 'titulo', e.target.value)}
-                            placeholder="Título da Pendência / Obrigação..."
-                            className="flex-1 font-bold text-xs text-red-900 bg-transparent border-b border-transparent hover:border-red-200 focus:border-red-500 focus:outline-none px-1 py-0.5"
-                          />
-                        </div>
-                        <button
-                          type="button"
-                          onClick={() => removePending(idx)}
-                          className="text-slate-400 hover:text-red-500 p-1 rounded transition-colors"
-                          title="Remover pendência"
-                        >
-                          <Trash2 size={15} />
-                        </button>
+                {pendingItems.map((item, idx) => (
+                  <div key={idx} className="bg-red-50/30 border border-red-200 rounded-xl p-4 shadow-2xs space-y-3">
+                    <div className="flex items-center justify-between gap-2 border-b border-red-100 pb-2">
+                      <div className="flex items-center gap-2 flex-1">
+                        <input
+                          type="text"
+                          className="w-12 bg-red-100 border border-red-300 rounded p-1 text-xs font-bold text-red-900 text-center"
+                          value={item.num || String(idx + 1)}
+                          onChange={(e) => updatePending(idx, 'num', e.target.value)}
+                          title="Número da Pendência"
+                        />
+                        <input
+                          type="text"
+                          className="flex-1 bg-white border border-red-200 rounded p-1.5 text-xs font-bold text-red-900"
+                          value={item.titulo || ''}
+                          onChange={(e) => updatePending(idx, 'titulo', e.target.value)}
+                          placeholder="Título da Pendência"
+                        />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => removePending(idx)}
+                        className="text-slate-400 hover:text-red-600 p-1.5 rounded transition-colors"
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+
+                    <div className="space-y-2 text-xs">
+                      <div>
+                        <label className="text-[10px] font-bold text-red-700 uppercase tracking-wider block mb-1">
+                          Descrição da Pendência / Ação Exigida
+                        </label>
+                        <textarea
+                          rows={2}
+                          className="w-full bg-white border border-red-200 rounded p-2 text-xs text-red-900 font-medium"
+                          value={item.descricao || ''}
+                          onChange={(e) => updatePending(idx, 'descricao', e.target.value)}
+                        />
                       </div>
 
-                      <textarea
-                        value={item.descricao || ''}
-                        onChange={(e) => updatePending(idx, 'descricao', e.target.value)}
-                        rows={2}
-                        className="w-full bg-red-50/20 border border-red-200 rounded-lg p-2.5 text-xs text-red-950 focus:bg-white focus:border-red-500 focus:outline-none resize-y font-medium"
-                        placeholder="Descreva a pendência e o motivo do destaque..."
-                      />
-
-                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs pt-1 border-t border-red-100">
-                        <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 rounded-lg px-2.5 py-1.5">
-                          <User size={13} className="text-slate-400 shrink-0" />
-                          <div className="flex-1">
-                            <span className="text-[10px] text-slate-400 block leading-tight">Responsável:</span>
-                            <input
-                              type="text"
-                              value={item.responsavel || ''}
-                              onChange={(e) => updatePending(idx, 'responsavel', e.target.value)}
-                              className="w-full text-xs text-slate-700 bg-transparent focus:outline-none font-medium"
-                              placeholder="Responsável pela pendência"
-                            />
-                          </div>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-[10px] font-bold text-red-700 uppercase tracking-wider block mb-1">
+                            Responsável
+                          </label>
+                          <input
+                            type="text"
+                            className="w-full bg-white border border-red-200 rounded p-1.5 text-xs text-red-900"
+                            value={item.responsavel || ''}
+                            onChange={(e) => updatePending(idx, 'responsavel', e.target.value)}
+                          />
                         </div>
-
-                        <div className="flex items-center gap-2 bg-red-50/50 border border-red-200 rounded-lg px-2.5 py-1.5">
-                          <Calendar size={13} className="text-red-500 shrink-0" />
-                          <div className="flex-1">
-                            <span className="text-[10px] text-red-600 font-semibold block leading-tight">Prazo Limite:</span>
-                            <input
-                              type="text"
-                              value={item.prazo || ''}
-                              onChange={(e) => updatePending(idx, 'prazo', e.target.value)}
-                              className="w-full text-xs text-red-900 bg-transparent focus:outline-none font-bold"
-                              placeholder="Data limite de entrega"
-                            />
-                          </div>
+                        <div>
+                          <label className="text-[10px] font-bold text-red-700 uppercase tracking-wider block mb-1">
+                            Prazo Estipulado
+                          </label>
+                          <input
+                            type="text"
+                            className="w-full bg-white border border-red-200 rounded p-1.5 text-xs text-red-900"
+                            value={item.prazo || ''}
+                            onChange={(e) => updatePending(idx, 'prazo', e.target.value)}
+                          />
                         </div>
                       </div>
                     </div>
-                  ))
-                )}
+                  </div>
+                ))}
               </div>
             </div>
           )}
 
-          {/* TAB 3: RESUMO EXECUTIVO */}
-          {activeTab === 'notes' && (
-            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-2xs space-y-4">
-              <div className="space-y-1">
-                <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-                  <MessageSquareText size={15} className="text-blue-600" />
-                  Resumo Executivo / Anotações Gerais da Reunião
-                </h3>
-                <p className="text-xs text-slate-500">
-                  Este texto alimentará a seção introdutória ou sumário de deliberações no documento final.
-                </p>
-              </div>
-
-              <textarea
-                value={notes}
-                onChange={(e) => setNotes(e.target.value)}
-                rows={6}
-                className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3.5 text-xs text-slate-800 focus:bg-white focus:border-blue-500 focus:outline-none resize-y leading-relaxed font-sans"
-                placeholder="Insira o resumo executivo dos principais pontos tratados na reunião..."
-              />
-            </div>
-          )}
-
-          {/* TAB 4: DADOS DA OBRA */}
+          {/* TAB 3: CABEÇALHO & PARTICIPANTES */}
           {activeTab === 'header' && (
-            <div className="bg-white border border-slate-200 rounded-xl p-5 shadow-2xs space-y-4">
-              <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-1.5">
-                <Building2 size={15} className="text-blue-600" />
-                Informações de Cabeçalho do Documento
-              </h3>
+            <div className="space-y-6 animate-in fade-in">
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-2xs space-y-4">
+                <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                  <Building2 size={16} className="text-blue-600" />
+                  Identificação da Reunião e Obra (Template DOCX)
+                </h3>
 
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
-                <div className="space-y-1">
-                  <label className="font-semibold text-slate-700">Código da Obra:</label>
-                  <input
-                    type="text"
-                    value={abertura.obraCodigo || ''}
-                    onChange={(e) => setAbertura({ ...abertura, obraCodigo: e.target.value })}
-                    placeholder="Ex: OB-2026-04"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 focus:bg-white focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="font-semibold text-slate-700">Nome do Empreendimento / Obra:</label>
-                  <input
-                    type="text"
-                    value={abertura.obraNome || ''}
-                    onChange={(e) => setAbertura({ ...abertura, obraNome: e.target.value })}
-                    placeholder="Ex: Edifício Horizonte Azul"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 focus:bg-white focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="font-semibold text-slate-700">Razão Social do Fornecedor:</label>
-                  <input
-                    type="text"
-                    value={abertura.fornecedor || ''}
-                    onChange={(e) => setAbertura({ ...abertura, fornecedor: e.target.value })}
-                    placeholder="Ex: Alpha Engenharia & Serviços Ltda"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 focus:bg-white focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="font-semibold text-slate-700">Pacote / Serviço:</label>
-                  <input
-                    type="text"
-                    value={abertura.servico || ''}
-                    onChange={(e) => setAbertura({ ...abertura, servico: e.target.value })}
-                    placeholder="Ex: Estruturas Metálicas e Cobertura"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 focus:bg-white focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="font-semibold text-slate-700">Assunto da Reunião:</label>
-                  <input
-                    type="text"
-                    value={abertura.assunto || ''}
-                    onChange={(e) => setAbertura({ ...abertura, assunto: e.target.value })}
-                    placeholder="Ex: Ata de Negociação Final e Fechamento de Contrato"
-                    className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 focus:bg-white focus:border-blue-500 focus:outline-none"
-                  />
-                </div>
-
-                <div className="space-y-1">
-                  <label className="font-semibold text-slate-700">RM / COT:</label>
-                  <div className="grid grid-cols-2 gap-2">
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
+                  <div>
+                    <label className="font-bold text-slate-500 block mb-1">Código da Obra</label>
                     <input
                       type="text"
-                      value={abertura.rm || ''}
-                      onChange={(e) => setAbertura({ ...abertura, rm: e.target.value })}
-                      placeholder="RM (ex: RM-1029)"
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 focus:bg-white focus:border-blue-500 focus:outline-none"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800 font-semibold"
+                      value={abertura.obraCodigo}
+                      onChange={(e) => updateAbertura('obraCodigo', e.target.value)}
                     />
+                  </div>
+
+                  <div className="sm:col-span-1 md:col-span-2">
+                    <label className="font-bold text-slate-500 block mb-1">Nome da Obra / Empreendimento</label>
                     <input
                       type="text"
-                      value={abertura.cot || ''}
-                      onChange={(e) => setAbertura({ ...abertura, cot: e.target.value })}
-                      placeholder="COT (ex: COT-450)"
-                      className="w-full bg-slate-50 border border-slate-200 rounded-lg p-2 focus:bg-white focus:border-blue-500 focus:outline-none"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800 font-semibold"
+                      value={abertura.obraNome}
+                      onChange={(e) => updateAbertura('obraNome', e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-500 block mb-1">Ata nº</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800 font-semibold"
+                      value={abertura.ataNumero || '01'}
+                      onChange={(e) => updateAbertura('ataNumero', e.target.value)}
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2 md:col-span-3">
+                    <label className="font-bold text-slate-500 block mb-1">Fornecedor / Razão Social</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800 font-semibold"
+                      value={abertura.fornecedor}
+                      onChange={(e) => updateAbertura('fornecedor', e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-500 block mb-1">Folha</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800 font-semibold"
+                      value={abertura.folha || '02'}
+                      onChange={(e) => updateAbertura('folha', e.target.value)}
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2 md:col-span-4">
+                    <label className="font-bold text-slate-500 block mb-1">Assunto / Tipo de Reunião</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800 font-semibold"
+                      value={abertura.assunto}
+                      onChange={(e) => updateAbertura('assunto', e.target.value)}
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2">
+                    <label className="font-bold text-slate-500 block mb-1">Pacote / Escopo de Serviço</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800 font-semibold"
+                      value={abertura.servico}
+                      onChange={(e) => updateAbertura('servico', e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-500 block mb-1">RM (Requisição)</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800 font-semibold"
+                      value={abertura.rm}
+                      onChange={(e) => updateAbertura('rm', e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-500 block mb-1">COT (Cotação)</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800 font-semibold"
+                      value={abertura.cot}
+                      onChange={(e) => updateAbertura('cot', e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-500 block mb-1">Data da Reunião</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800 font-semibold"
+                      value={abertura.dataReuniao || ''}
+                      onChange={(e) => updateAbertura('dataReuniao', e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-500 block mb-1">Horário</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800 font-semibold"
+                      value={abertura.horario || ''}
+                      onChange={(e) => updateAbertura('horario', e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-500 block mb-1">Local</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800 font-semibold"
+                      value={abertura.local || ''}
+                      onChange={(e) => updateAbertura('local', e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-500 block mb-1">Link da Reunião</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800 font-semibold"
+                      value={abertura.linkReuniao || ''}
+                      onChange={(e) => updateAbertura('linkReuniao', e.target.value)}
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* Participantes */}
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-2xs space-y-4">
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                    <Users size={16} className="text-indigo-600" />
+                    Tabela de Participantes da Reunião
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={addParticipante}
+                    className="flex items-center gap-1 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition-colors"
+                  >
+                    <Plus size={14} /> Adicionar Participante
+                  </button>
+                </div>
+
+                <div className="overflow-x-auto">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-slate-100 text-slate-600 font-bold uppercase text-[10px]">
+                      <tr>
+                        <th className="p-2.5 rounded-l">Nome / Cargo</th>
+                        <th className="p-2.5">Empresa</th>
+                        <th className="p-2.5">E-mail</th>
+                        <th className="p-2.5">Visto</th>
+                        <th className="p-2.5 rounded-r w-10"></th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {(abertura.participantes || []).map((p, idx) => (
+                        <tr key={p.id || idx} className="hover:bg-slate-50">
+                          <td className="p-2">
+                            <input
+                              type="text"
+                              placeholder="Nome do Participante"
+                              className="w-full bg-slate-50 border border-slate-200 rounded p-1.5 text-xs font-medium text-slate-800"
+                              value={p.nome}
+                              onChange={(e) => updateParticipante(idx, 'nome', e.target.value)}
+                            />
+                          </td>
+                          <td className="p-2">
+                            <input
+                              type="text"
+                              placeholder="Empresa / Departamento"
+                              className="w-full bg-slate-50 border border-slate-200 rounded p-1.5 text-xs text-slate-800"
+                              value={p.empresa}
+                              onChange={(e) => updateParticipante(idx, 'empresa', e.target.value)}
+                            />
+                          </td>
+                          <td className="p-2">
+                            <input
+                              type="email"
+                              placeholder="email@empresa.com.br"
+                              className="w-full bg-slate-50 border border-slate-200 rounded p-1.5 text-xs text-slate-800"
+                              value={p.email}
+                              onChange={(e) => updateParticipante(idx, 'email', e.target.value)}
+                            />
+                          </td>
+                          <td className="p-2">
+                            <input
+                              type="text"
+                              placeholder="Visto"
+                              className="w-full bg-slate-50 border border-slate-200 rounded p-1.5 text-xs text-slate-800"
+                              value={p.visto || ''}
+                              onChange={(e) => updateParticipante(idx, 'visto', e.target.value)}
+                            />
+                          </td>
+                          <td className="p-2 text-center">
+                            <button
+                              type="button"
+                              onClick={() => removeParticipante(idx)}
+                              className="text-slate-400 hover:text-red-600 p-1"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 4: RESUMO EXECUTIVO */}
+          {activeTab === 'resumo' && (
+            <div className="space-y-4 animate-in fade-in">
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-2xs space-y-3">
+                <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                  <FileText size={16} className="text-blue-600" />
+                  Resumo Executivo da Ata / Fechamento da Reunião
+                </h3>
+                <textarea
+                  rows={8}
+                  className="w-full bg-slate-50 border border-slate-300 rounded-lg p-3 text-xs text-slate-800 leading-relaxed focus:bg-white focus:outline-none focus:border-blue-500"
+                  value={abertura.resumoExecutivo || notes}
+                  onChange={(e) => {
+                    updateAbertura('resumoExecutivo', e.target.value);
+                    setNotes(e.target.value);
+                  }}
+                  placeholder="Ex: A reunião consolidou com sucesso o fechamento comercial e técnico para a execução do escopo..."
+                />
+              </div>
+            </div>
+          )}
+
+          {/* TAB 5: VALORES & CONDIÇÕES */}
+          {activeTab === 'commercial' && (
+            <div className="space-y-4 animate-in fade-in">
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-2xs space-y-4">
+                <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                  <DollarSign size={16} className="text-emerald-600" />
+                  Abertura de Valores Comerciais da Contratação (Template DOCX)
+                </h3>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+                  <div className="sm:col-span-2 md:col-span-3 bg-emerald-50/50 p-3 rounded-lg border border-emerald-200">
+                    <label className="font-bold text-emerald-900 block mb-1">Valor Negociado Total</label>
+                    <input
+                      type="text"
+                      className="w-full bg-white border border-emerald-300 rounded p-2 text-sm font-bold text-emerald-800"
+                      value={abertura.valoresComerciais?.valorTotal || ''}
+                      onChange={(e) => updateValores('valorTotal', e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-500 block mb-1">Valor Prestação de Serviços</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800"
+                      value={abertura.valoresComerciais?.valorServicos || ''}
+                      onChange={(e) => updateValores('valorServicos', e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-500 block mb-1">Valor Industrialização</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800"
+                      value={abertura.valoresComerciais?.valorIndustrializacao || ''}
+                      onChange={(e) => updateValores('valorIndustrializacao', e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-500 block mb-1">Valor Venda Mercantil</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800"
+                      value={abertura.valoresComerciais?.valorVendaMercantil || ''}
+                      onChange={(e) => updateValores('valorVendaMercantil', e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-500 block mb-1">Valor Locação de Equipamentos</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800"
+                      value={abertura.valoresComerciais?.valorLocacao || ''}
+                      onChange={(e) => updateValores('valorLocacao', e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-500 block mb-1">Valor de Fretes</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800"
+                      value={abertura.valoresComerciais?.valorFretes || ''}
+                      onChange={(e) => updateValores('valorFretes', e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-500 block mb-1">Valor de Gerenciamento / Projetos</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800"
+                      value={abertura.valoresComerciais?.valorGerenciamento || ''}
+                      onChange={(e) => updateValores('valorGerenciamento', e.target.value)}
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2 md:col-span-3">
+                    <label className="font-bold text-slate-500 block mb-1">Valor de Faturamento Direto</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800"
+                      value={abertura.valoresComerciais?.valorFaturamentoDireto || ''}
+                      onChange={(e) => updateValores('valorFaturamentoDireto', e.target.value)}
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2 md:col-span-3">
+                    <label className="font-bold text-slate-500 block mb-1">Sinal ou Mobilização</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800"
+                      value={abertura.valoresComerciais?.sinalMobilizacao || ''}
+                      onChange={(e) => updateValores('sinalMobilizacao', e.target.value)}
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2 md:col-span-3">
+                    <label className="font-bold text-slate-500 block mb-1">Condição de Pagamento</label>
+                    <textarea
+                      rows={2}
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800"
+                      value={abertura.valoresComerciais?.condicaoPagamento || ''}
+                      onChange={(e) => updateValores('condicaoPagamento', e.target.value)}
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2 md:col-span-3">
+                    <label className="font-bold text-slate-500 block mb-1">Garantia Contratual / Retenção</label>
+                    <textarea
+                      rows={2}
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800"
+                      value={abertura.valoresComerciais?.retencaoGarantia || ''}
+                      onChange={(e) => updateValores('retencaoGarantia', e.target.value)}
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2 md:col-span-3">
+                    <label className="font-bold text-slate-500 block mb-1">Risco Sacado (AF / 120 dias)</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800"
+                      value={abertura.valoresComerciais?.riscoSacado || ''}
+                      onChange={(e) => updateValores('riscoSacado', e.target.value)}
+                    />
+                  </div>
+
+                  <div className="sm:col-span-2 md:col-span-3">
+                    <label className="font-bold text-slate-500 block mb-1">Reajuste Contratual</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800"
+                      value={abertura.valoresComerciais?.reajuste || ''}
+                      onChange={(e) => updateValores('reajuste', e.target.value)}
+                    />
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 6: CRONOGRAMA & PRAZOS */}
+          {activeTab === 'prazos' && (
+            <div className="space-y-4 animate-in fade-in">
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-2xs space-y-4">
+                <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                  <Clock size={16} className="text-blue-600" />
+                  Marcos Contratuais e Cronograma de Prazos (Item 21 do Template)
+                </h3>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3 text-xs">
+                  <div>
+                    <label className="font-bold text-slate-500 block mb-1">Início da Mobilização</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800"
+                      value={abertura.prazosCronograma?.mobilizacao || ''}
+                      onChange={(e) => updatePrazos('mobilizacao', e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-500 block mb-1">Elaboração / Entrega Projeto</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800"
+                      value={abertura.prazosCronograma?.elaboracaoProjeto || ''}
+                      onChange={(e) => updatePrazos('elaboracaoProjeto', e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-500 block mb-1">Aprovação do Projeto</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800"
+                      value={abertura.prazosCronograma?.aprovacaoProjeto || ''}
+                      onChange={(e) => updatePrazos('aprovacaoProjeto', e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-500 block mb-1">Entrega do Material</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800"
+                      value={abertura.prazosCronograma?.entregaMaterial || ''}
+                      onChange={(e) => updatePrazos('entregaMaterial', e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-500 block mb-1">Confirmação Medidas Definitivas</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800"
+                      value={abertura.prazosCronograma?.medidasDefinitivas || ''}
+                      onChange={(e) => updatePrazos('medidasDefinitivas', e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-500 block mb-1">Prazo para Fabricação</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800"
+                      value={abertura.prazosCronograma?.fabricacao || ''}
+                      onChange={(e) => updatePrazos('fabricacao', e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-500 block mb-1">Prazo de Execução</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800"
+                      value={abertura.prazosCronograma?.execucao || ''}
+                      onChange={(e) => updatePrazos('execucao', e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-500 block mb-1">Prazo de Comissionamento</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800"
+                      value={abertura.prazosCronograma?.comissionamento || ''}
+                      onChange={(e) => updatePrazos('comissionamento', e.target.value)}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="font-bold text-slate-500 block mb-1">Operação Assistida</label>
+                    <input
+                      type="text"
+                      className="w-full bg-slate-50 border border-slate-200 rounded p-2 text-slate-800"
+                      value={abertura.prazosCronograma?.operacaoAssistida || ''}
+                      onChange={(e) => updatePrazos('operacaoAssistida', e.target.value)}
                     />
                   </div>
                 </div>
@@ -564,19 +1065,19 @@ export function FinalAtaValidationModal({
           )}
         </div>
 
-        {/* Footer Actions */}
-        <div className="px-6 py-4 bg-white border-t border-slate-200 flex flex-wrap items-center justify-between gap-3">
+        {/* Footer */}
+        <div className="px-6 py-4 bg-white border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
           <div className="text-xs text-slate-500 flex items-center gap-1.5">
-            <FileText size={14} className="text-emerald-600" />
-            <span>Layout verificado e validado para injeção no template oficial.</span>
+            <CheckCircle2 size={16} className="text-emerald-600" />
+            <span>Todos os acordos e pendências em vermelho serão inseridos com precisão na Ata Final DOCX.</span>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 w-full sm:w-auto">
             <button
               type="button"
               onClick={onClose}
               disabled={loading}
-              className="px-4 py-2.5 text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 rounded-lg transition-colors disabled:opacity-50"
+              className="w-full sm:w-auto px-4 py-2.5 text-xs font-bold text-slate-600 hover:bg-slate-100 rounded-lg uppercase tracking-tight transition-colors disabled:opacity-50"
             >
               Cancelar
             </button>
@@ -585,17 +1086,17 @@ export function FinalAtaValidationModal({
               type="button"
               onClick={handleConfirm}
               disabled={loading}
-              className="flex items-center gap-2 px-6 py-2.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg shadow-lg shadow-emerald-200 uppercase tracking-tight transition-all disabled:opacity-50"
+              className="w-full sm:w-auto px-6 py-2.5 text-xs font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg uppercase tracking-tight shadow-md shadow-emerald-200 flex items-center justify-center gap-2 transition-colors disabled:bg-slate-400"
             >
               {loading ? (
                 <>
                   <Loader2 size={16} className="animate-spin" />
-                  Gerando Ata Final (.docx)...
+                  Gerando Ata Final DOCX...
                 </>
               ) : (
                 <>
                   <FileDown size={16} />
-                  Confirmar e Baixar Ata Final (.docx)
+                  Confirmar e Gerar Ata Final (.DOCX)
                 </>
               )}
             </button>
@@ -603,5 +1104,13 @@ export function FinalAtaValidationModal({
         </div>
       </div>
     </div>
+  );
+}
+
+function FileCheck2Icon() {
+  return (
+    <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+    </svg>
   );
 }

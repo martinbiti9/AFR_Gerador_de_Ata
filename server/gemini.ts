@@ -130,6 +130,9 @@ IMPORTANTE: Responda SOMENTE em JSON válido com as chaves "tipoFornecimento" e 
     if (modelsConfig.checklistParams.temperature !== undefined) config.temperature = modelsConfig.checklistParams.temperature;
     if (modelsConfig.checklistParams.topP !== undefined) config.topP = modelsConfig.checklistParams.topP;
     if (modelsConfig.checklistParams.maxOutputTokens !== undefined) config.maxOutputTokens = modelsConfig.checklistParams.maxOutputTokens;
+    if (modelsConfig.checklistParams.thinkingBudget !== undefined && modelsConfig.checklistParams.thinkingBudget > 0) {
+      config.thinkingConfig = { thinkingBudget: modelsConfig.checklistParams.thinkingBudget };
+    }
   }
 
   const modelName = modelsConfig.checklistModel || 'gemini-2.5-pro';
@@ -266,6 +269,9 @@ IMPORTANTE: Responda SOMENTE em formato JSON válido.`;
     if (modelsConfig.proposalParams.temperature !== undefined) config.temperature = modelsConfig.proposalParams.temperature;
     if (modelsConfig.proposalParams.topP !== undefined) config.topP = modelsConfig.proposalParams.topP;
     if (modelsConfig.proposalParams.maxOutputTokens !== undefined) config.maxOutputTokens = modelsConfig.proposalParams.maxOutputTokens;
+    if (modelsConfig.proposalParams.thinkingBudget !== undefined && modelsConfig.proposalParams.thinkingBudget > 0) {
+      config.thinkingConfig = { thinkingBudget: modelsConfig.proposalParams.thinkingBudget };
+    }
   }
 
   const modelName = modelsConfig.proposalModel || 'gemini-2.5-pro';
@@ -400,6 +406,9 @@ Divergências Prévias: ${JSON.stringify(divergences || [])}
     if (modelsConfig.finalAtaParams.temperature !== undefined) config.temperature = modelsConfig.finalAtaParams.temperature;
     if (modelsConfig.finalAtaParams.topP !== undefined) config.topP = modelsConfig.finalAtaParams.topP;
     if (modelsConfig.finalAtaParams.maxOutputTokens !== undefined) config.maxOutputTokens = modelsConfig.finalAtaParams.maxOutputTokens;
+    if (modelsConfig.finalAtaParams.thinkingBudget !== undefined && modelsConfig.finalAtaParams.thinkingBudget > 0) {
+      config.thinkingConfig = { thinkingBudget: modelsConfig.finalAtaParams.thinkingBudget };
+    }
   }
 
   const modelName = modelsConfig.finalAtaModel || 'gemini-2.5-pro';
@@ -440,14 +449,24 @@ export async function extractDocumentMetadata(files: { inlineData: { data: strin
   const templateContext = template ? buildTemplateContextPrompt(template) : '';
 
   const systemInstruction = `Você é um extrator de metadados contratuais e de engenharia de documentos de obras da Afonso França Engenharia.
-Sua missão é inspecionar os arquivos fornecidos (PDFs de checklists, planilhas orçamentárias, propostas ou especificações) e extrair os metadados cadastrais fundamentais:
-- obraCodigo: Código identificador da obra (ex: "590", "421", "OBRA 102").
+Sua missão é inspecionar os arquivos fornecidos (PDFs de checklists, planilhas orçamentárias, propostas ou especificações) e extrair todos os metadados cadastrais, comerciais e de participantes fundamentais de acordo com a estrutura do template oficial:
+- obraCodigo: Código identificador da obra (ex: "0590", "421", "OBRA 102").
 - obraNome: Nome do projeto ou condomínio (ex: "Hospital Sabará", "Edifício Parque da Cidade").
-- fornecedor: Razão social ou nome fantasia do fornecedor/empreiteiro.
-- assunto: Tema ou objeto da reunião/negociação.
-- servico: Descrição do pacote ou escopo contratado (ex: "Pintura Externa", "Estrutura Metálica").
+- fornecedor: Razão social ou nome fantasia do fornecedor/empreiteiro (ex: "Construmódulo Sistemas Internos Ltda.").
+- assunto: Tema ou objeto da reunião/negociação (ex: "REUNIÃO DE Checklist de Contratação e Condições Gerais de Fornecimento").
+- servico: Descrição do pacote ou escopo contratado (ex: "Drywall, forros e divisórias internas").
 - rm: Número da Requisição de Materiais/Serviços (RM).
-- cot: Número da Cotação (COT) ou Mapa de Cotação.
+- cot: Número da Cotação (COT).
+- ataNumero: Número da ata (ex: "01").
+- dataReuniao: Data da reunião (ex: "09/01/2025").
+- horario: Horário (ex: "10:30h").
+- local: Local (ex: "Online - Teams").
+- linkReuniao: Link da reunião (ex: Teams/Meet).
+- folha: Número da folha.
+- participantes: Array de objetos com { "nome": "...", "cargoDepto": "...", "empresa": "...", "email": "...", "visto": "..." }.
+- valoresComerciais: Objeto com { "valorTotal": "...", "valorServicos": "...", "valorIndustrializacao": "...", "valorVendaMercantil": "...", "valorLocacao": "...", "valorFretes": "...", "valorGerenciamento": "...", "valorFaturamentoDireto": "...", "sinalMobilizacao": "...", "condicaoPagamento": "...", "retencaoGarantia": "...", "riscoSacado": "...", "reajuste": "..." }.
+- prazosCronograma: Objeto com { "mobilizacao": "...", "elaboracaoProjeto": "...", "aprovacaoProjeto": "...", "entregaMaterial": "...", "medidasDefinitivas": "...", "fabricacao": "...", "execucao": "...", "comissionamento": "...", "operacaoAssistida": "..." }.
+- resumoExecutivo: Resumo geral da contratação e dos alinhamentos.
 
 ${templateContext}
 
@@ -460,7 +479,17 @@ Responda SOMENTE em JSON com o formato:
     "assunto": "...",
     "servico": "...",
     "rm": "...",
-    "cot": "..."
+    "cot": "...",
+    "ataNumero": "01",
+    "dataReuniao": "...",
+    "horario": "...",
+    "local": "Online - Teams",
+    "linkReuniao": "...",
+    "folha": "01",
+    "participantes": [],
+    "valoresComerciais": {},
+    "prazosCronograma": {},
+    "resumoExecutivo": "..."
   }
 }`;
 

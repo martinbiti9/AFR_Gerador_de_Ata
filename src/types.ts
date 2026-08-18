@@ -9,6 +9,43 @@ export interface UserProfile {
   mustChangePassword?: boolean;
 }
 
+export interface ParticipanteItem {
+  id?: string;
+  nome: string;
+  cargoDepto?: string;
+  empresa: string;
+  email: string;
+  visto?: string;
+}
+
+export interface ValoresComerciais {
+  valorTotal?: string;
+  valorServicos?: string;
+  valorIndustrializacao?: string;
+  valorVendaMercantil?: string;
+  valorLocacao?: string;
+  valorFretes?: string;
+  valorGerenciamento?: string;
+  valorFaturamentoDireto?: string;
+  sinalMobilizacao?: string;
+  condicaoPagamento?: string;
+  retencaoGarantia?: string;
+  riscoSacado?: string;
+  reajuste?: string;
+}
+
+export interface PrazosCronograma {
+  mobilizacao?: string;
+  elaboracaoProjeto?: string;
+  aprovacaoProjeto?: string;
+  entregaMaterial?: string;
+  medidasDefinitivas?: string;
+  fabricacao?: string;
+  execucao?: string;
+  comissionamento?: string;
+  operacaoAssistida?: string;
+}
+
 export interface AberturaData {
   obraCodigo: string;
   obraNome: string;
@@ -17,6 +54,16 @@ export interface AberturaData {
   fornecedor: string;
   rm: string;
   cot: string;
+  ataNumero?: string;
+  dataReuniao?: string;
+  horario?: string;
+  local?: string;
+  linkReuniao?: string;
+  folha?: string;
+  participantes?: ParticipanteItem[];
+  valoresComerciais?: ValoresComerciais;
+  prazosCronograma?: PrazosCronograma;
+  resumoExecutivo?: string;
 }
 
 export type Estilo = 'normal' | 'forte' | 'alerta' | 'ressalva';
@@ -34,11 +81,14 @@ export interface Bloco {
 
 export interface TopicCard {
   id: string;
+  num?: string;
   title: string;
   regraObra: string;
   excecaoAdmitida: string;
   pontoAtencao: string;
   perguntaFornecedor: string;
+  responsavel?: string;
+  prazo?: string;
   source: string;
   blocos?: Bloco[];
 }
@@ -127,85 +177,43 @@ export interface CustomPromptsConfig {
   chatbotInstructions: string;
 }
 
-export type TemplateFieldType = 'string' | 'number' | 'date' | 'boolean' | 'enum' | 'table';
-
-export interface TemplateFieldRenderOptions {
-  highlightColor?: 'red' | 'yellow' | 'none';
-  prefix?: string;
-  suffix?: string;
-  emptyPlaceholder?: string;
-  preserveCase?: boolean;
+export interface SystemLog {
+  id: string;
+  timestamp: string;
+  level: 'INFO' | 'WARN' | 'ERROR';
+  category: 'AUTH' | 'ADMIN' | 'AI' | 'DOCX' | 'SYSTEM' | 'SECURITY';
+  message: string;
+  details?: any;
 }
 
-export interface TemplateField {
-  name: string;
-  path: string;
-  type: TemplateFieldType;
-  required: boolean;
-  description: string;
-  enumValues?: string[];
-  defaultValue?: string | number | boolean;
-  renderOptions?: TemplateFieldRenderOptions;
-}
-
-export interface LoopColumn {
-  cellIndex: number;
-  key: string;
-  label: string;
-}
-
-export interface TemplateLoop {
-  tag: string;
-  description: string;
-  tableIndex?: number;
-  prototypeRowIndex?: number;
-  columns?: LoopColumn[];
-  removeOtherRows?: boolean;
-  basePPr?: string;
-  baseRPr?: string;
-  itemFields: TemplateField[];
-  minItems?: number;
-  allowEmpty?: boolean;
-}
-
-export interface TemplateSchema {
-  version: number;
-  templateId: string;
-  fields: TemplateField[];
-  loops: TemplateLoop[];
-  placeholderMap?: Record<string, string>;
-  removerRealceAmarelo?: boolean;
-  createdAt: string;
-  updatedAt: string;
-  generatedBy: 'system' | 'ai' | 'admin';
-}
-
-export interface DetectedSection {
+export interface TemplateAnalysisSection {
   title: string;
   type: string;
   description: string;
   fields?: string[];
 }
 
-export interface TableSchema {
+export interface TemplateAnalysisTable {
   name: string;
   columns: string[];
   sampleRowTags: string[];
 }
 
-export interface TableInspectionRow {
-  index: number;
-  cells: string[];
+export interface TemplateAnalysis {
+  placeholders: string[];
+  summary: string;
+  templateType: string;
+  detectedSections: TemplateAnalysisSection[];
+  tables: TemplateAnalysisTable[];
+  suggestedPrompts: {
+    checklist?: string;
+    proposal?: string;
+    preAta?: string;
+    finalAta?: string;
+  };
 }
 
-export interface TableInspection {
-  index: number;
-  rowCount: number;
-  columnCount: number;
-  rows: TableInspectionRow[];
-}
-
-export interface TemplateConfig {
+export interface TemplateVersion {
   id: string;
   version: number;
   name: string;
@@ -218,30 +226,13 @@ export interface TemplateConfig {
   standardClauses?: string;
   signatures?: string;
   createdAt: string;
-  updatedAt?: string;
-  docxBlobBase64?: string;
-  blobChunks?: string[];
   originalFileName?: string;
   fileSizeBytes?: number;
-  schema?: TemplateSchema;
   detectedPlaceholders?: string[];
   structureSummary?: string;
-  detectedSections?: DetectedSection[];
-  tableSchemas?: TableSchema[];
-  tables?: TableInspection[];
+  detectedSections?: TemplateAnalysisSection[];
+  tableSchemas?: TemplateAnalysisTable[];
   templateType?: string;
   rawTextPreview?: string;
-  isActive?: boolean;
-}
-
-export interface AuditLog {
-  id: string;
-  timestamp: string;
-  level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG';
-  category: 'AI' | 'DOCX' | 'CHECKLIST' | 'PROPOSAL' | 'SYSTEM' | 'AUTH' | 'ADMIN';
-  message: string;
-  actorUid?: string;
-  actorEmail?: string;
-  actorRole?: 'admin' | 'member';
-  details?: any;
+  docxBlobBase64?: string;
 }

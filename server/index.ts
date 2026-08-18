@@ -32,7 +32,8 @@ import {
   getActiveModels,
   updateActiveModels,
   getActivePrompts,
-  updateActivePrompts
+  updateActivePrompts,
+  initializeAdminConfigFromFirestore
 } from './configStore';
 import {
   initFirebaseAdmin,
@@ -73,6 +74,10 @@ async function startServer() {
   try {
     initFirebaseAdmin();
     console.log('Firebase Admin SDK inicializado com sucesso.');
+    // Hydrate or perform initial persistence of administration configurations in Firestore
+    initializeAdminConfigFromFirestore().catch((err) => {
+      console.warn('Aviso ao inicializar configurações no Firestore:', err);
+    });
   } catch (adminErr) {
     console.error('Erro ao inicializar Firebase Admin SDK:', adminErr);
   }
