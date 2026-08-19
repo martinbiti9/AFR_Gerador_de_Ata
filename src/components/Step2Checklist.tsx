@@ -18,6 +18,7 @@ import {
   FileCheck2
 } from 'lucide-react';
 import { safeFetchJson } from '../utils/api';
+import { validateUploadFiles } from '../utils/fileValidation';
 
 interface Props {
   state: AppState;
@@ -28,25 +29,61 @@ interface Props {
 export function Step2Checklist({ state, updateState, onMetadataDetected }: Props) {
   const [files, setFiles] = useState<File[]>([]);
   const [loading, setLoading] = useState(false);
+  const [progressInfo, setProgressInfo] = useState<{ message: string; progressPercent: number } | null>(null);
   const [error, setError] = useState('');
   const [editingCard, setEditingCard] = useState<string | null>(null);
   const [showUploaderAgain, setShowUploaderAgain] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      setFiles(Array.from(e.target.files));
+    if (e.target.files && e.target.files.length > 0) {
+      const selected = Array.from(e.target.files);
+      const validation = validateUploadFiles(selected);
+      if (!validation.valid) {
+        setError(validation.error || 'Arquivos selecionados inválidos.');
+        setFiles([]);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        return;
+      }
+      setError('');
+      setFiles(selected);
     }
   };
 
   const handleAnalyze = async () => {
     if (files.length === 0) return;
+
+    const validation = validateUploadFiles(files);
+    if (!validation.valid) {
+      setError(validation.error || 'Erro na validação dos arquivos.');
+      return;
+    }
     
     setLoading(true);
     setError('');
+    setProgressInfo({ message: 'Iniciando análise do Check List em lotes...', progressPercent: 5 });
     
+    const meetingId = state.meetingId || `analysis-${Date.now()}`;
     const formData = new FormData();
     files.forEach(f => formData.append('files', f));
+    formData.append('meetingId', meetingId);
+
+    // Polling incremental de progresso
+    const pollTimer = setInterval(async () => {
+      try {
+        const status = await safeFetchJson<{ stage: string; message: string; progressPercent: number }>(
+          `/api/meetings/${meetingId}/analysis-status`
+        );
+        if (status && status.message) {
+          setProgressInfo({
+            message: status.message,
+            progressPercent: status.progressPercent || 15
+          });
+        }
+      } catch {
+        // silent polling catch
+      }
+    }, 800);
 
     try {
       // 1. Analyze checklist rules framed into template
@@ -81,7 +118,9 @@ export function Step2Checklist({ state, updateState, onMetadataDetected }: Props
     } catch (err: any) {
       setError(err.message || 'Erro ao processar documentos do Check List');
     } finally {
+      clearInterval(pollTimer);
       setLoading(false);
+      setProgressInfo(null);
     }
   };
 
@@ -169,6 +208,24 @@ export function Step2Checklist({ state, updateState, onMetadataDetected }: Props
           )}
 
           {error && <p className="text-red-600 text-xs bg-red-50 p-3 rounded-lg border border-red-200">{error}</p>}
+
+          {loading && progressInfo && (
+            <div className="p-4 bg-blue-50 border border-blue-200 rounded-xl space-y-2 max-w-md mx-auto animate-in fade-in">
+              <div className="flex items-center justify-between text-xs font-semibold text-blue-900">
+                <span className="flex items-center gap-2">
+                  <Loader2 size={14} className="animate-spin text-blue-600" />
+                  {progressInfo.message}
+                </span>
+                <span>{progressInfo.progressPercent}%</span>
+              </div>
+              <div className="w-full bg-blue-200/60 rounded-full h-2 overflow-hidden">
+                <div 
+                  className="bg-blue-600 h-2 rounded-full transition-all duration-300 ease-out" 
+                  style={{ width: `${Math.max(5, Math.min(100, progressInfo.progressPercent))}%` }}
+                />
+              </div>
+            </div>
+          )}
 
           <div className="flex flex-col sm:flex-row items-center justify-center gap-3">
             {showUploaderAgain && (

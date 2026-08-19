@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { Request, Response, NextFunction } from 'express';
 import { initializeApp, getApps, cert, applicationDefault, App } from 'firebase-admin/app';
 import { getAuth, Auth } from 'firebase-admin/auth';
@@ -9,7 +10,7 @@ export interface UserRecord {
   email: string;              // sempre em minúsculas
   displayName: string;
   role: 'member' | 'admin';
-  domain: 'afonsofranca.com.br' | 'biti9.com.br' | string;
+  domain: string;
   provider: 'password' | 'google.com' | string;
   isActive: boolean;
   mustChangePassword: boolean;
@@ -39,10 +40,27 @@ let adminApp: App | null = null;
 let adminAuth: Auth | null = null;
 let adminDb: Firestore | null = null;
 
-export const FIRESTORE_DATABASE_ID = process.env.FIRESTORE_DATABASE_ID || 'ai-studio-495e4a2f-bc01-4197-9d3d-8b17577710a2';
-export const ALLOWED_ADMIN_DOMAIN = process.env.ALLOWED_ADMIN_DOMAIN || 'biti9.com.br';
-export const ALLOWED_MEMBER_DOMAIN = process.env.ALLOWED_MEMBER_DOMAIN || 'afonsofranca.com.br';
-export const FIREBASE_PROJECT_ID = process.env.FIREBASE_PROJECT_ID || process.env.GCP_PROJECT_ID || 'biti9-performevaluationsummary';
+/**
+ * Valida variáveis de ambiente obrigatórias no boot.
+ * Se qualquer uma estiver ausente, loga erro claro e encerra o processo (process.exit(1)).
+ */
+function getRequiredEnv(key: string, alias?: string): string {
+  const val = process.env[key] || (alias ? process.env[alias] : undefined);
+  if (!val || !val.trim()) {
+    const errorMsg = `[FATAL] Variável de ambiente obrigatória '${key}'${alias ? ` (ou '${alias}')` : ''} não está configurada. Encerrando servidor no boot.`;
+    console.error(errorMsg);
+    try {
+      addLog('ERROR', 'SYSTEM', errorMsg, { missingEnv: key });
+    } catch {}
+    process.exit(1);
+  }
+  return val.trim().replace(/^["']|["']$/g, '');
+}
+
+export const FIREBASE_PROJECT_ID = getRequiredEnv('FIREBASE_PROJECT_ID', 'GCP_PROJECT_ID');
+export const FIRESTORE_DATABASE_ID = getRequiredEnv('FIRESTORE_DATABASE_ID');
+export const ALLOWED_ADMIN_DOMAIN = getRequiredEnv('ALLOWED_ADMIN_DOMAIN').toLowerCase().replace(/^@+/, '');
+export const ALLOWED_MEMBER_DOMAIN = getRequiredEnv('ALLOWED_MEMBER_DOMAIN').toLowerCase().replace(/^@+/, '');
 
 // In-memory fallback cache for user records
 const memoryUsersCache = new Map<string, UserRecord>();
@@ -85,57 +103,46 @@ export function initFirebaseAdmin(): { adminApp: App; adminAuth: Auth; adminDb: 
 }
 
 /**
- * Resilient JWT token decoder fallback for Firebase ID tokens and Google tokens
- */
-function decodeJwtPayload(token: string): any | null {
-  try {
-    const parts = token.split('.');
-    if (parts.length !== 3) return null;
-    const payload = JSON.parse(Buffer.from(parts[1], 'base64url').toString('utf8'));
-    
-    // Validate standard Firebase/Google JWT fields with relaxed clock tolerance
-    const now = Math.floor(Date.now() / 1000);
-    if (payload.exp && payload.exp < now - 600) {
-      console.warn('Token expirado:', payload.exp, 'Agora:', now);
-      return null;
-    }
-    return payload;
-  } catch (err) {
-    console.warn('Falha ao decodificar payload JWT:', err);
-    return null;
-  }
-}
-
-/**
- * Middleware: Verify Firebase ID token and validate domain & user status
+ * Middleware: Verify Firebase ID token and validate domain & user status.
+ * Rejeita com 401 se a assinatura do token não puder ser validada pelo Firebase Admin.
  */
 export async function requireAuth(req: Request, res: Response, next: NextFunction) {
   try {
     const authHeader = req.headers.authorization;
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
-      return res.status(401).json({ error: 'Token de autenticação não fornecido.' });
+      return res.status(401).json({ 
+        error: 'Token de autenticação não fornecido.',
+        code: 'UNAUTHORIZED'
+      });
     }
 
     const token = authHeader.split('Bearer ')[1].trim();
     if (!token) {
-      return res.status(401).json({ error: 'Token de autenticação inválido.' });
+      return res.status(401).json({ 
+        error: 'Token de autenticação inválido.',
+        code: 'UNAUTHORIZED'
+      });
     }
 
     let decodedToken: any = null;
 
-    // 1. Try Firebase Admin verification
+    // Verificação estrita de assinatura via Firebase Admin
     try {
       const { adminAuth: authInstance } = initFirebaseAdmin();
       // Use checkRevoked = false for fast local x509 validation
       decodedToken = await authInstance.verifyIdToken(token, false);
     } catch (adminErr: any) {
-      // 2. Resilient JWT fallback validation
-      decodedToken = decodeJwtPayload(token);
+      addLog('WARN', 'AUTH', `Falha ao verificar assinatura do token Firebase: ${adminErr?.message || adminErr}`);
+      return res.status(401).json({ 
+        error: 'Sessão inválida, não autenticada ou expirada. Assinatura do token não pôde ser verificada.',
+        code: 'UNAUTHORIZED'
+      });
     }
 
     if (!decodedToken || (!decodedToken.sub && !decodedToken.uid && !decodedToken.user_id)) {
       return res.status(401).json({ 
-        error: 'Sessão expirada ou token inválido. Por favor, faça login novamente.' 
+        error: 'Sessão expirada ou token inválido. Por favor, faça login novamente.',
+        code: 'UNAUTHORIZED'
       });
     }
 
@@ -153,8 +160,9 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       return res.status(403).json({ error: 'Conta de usuário sem e-mail associado.' });
     }
 
-    const isBiti9 = email.endsWith(`@${ALLOWED_ADMIN_DOMAIN}`) || email.includes('biti9.com.br');
-    const isAfonsoFranca = email.endsWith(`@${ALLOWED_MEMBER_DOMAIN}`) || email.includes('afonsofranca.com.br');
+    // Checagem estrita de sufixo de domínio (@dominio)
+    const isBiti9 = email === ALLOWED_ADMIN_DOMAIN || email.endsWith('@' + ALLOWED_ADMIN_DOMAIN);
+    const isAfonsoFranca = email === ALLOWED_MEMBER_DOMAIN || email.endsWith('@' + ALLOWED_MEMBER_DOMAIN);
 
     if (!isBiti9 && !isAfonsoFranca) {
       addLog('WARN', 'AUTH', `Tentativa de login negada: domínio não autorizado (${email})`, {
@@ -166,20 +174,26 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
       });
     }
 
-    // Role assignment based on verified domain
+    // Atribuição de perfil baseada no domínio verificado
     const assignedRole: 'admin' | 'member' = isBiti9 ? 'admin' : 'member';
     const domain = isBiti9 ? ALLOWED_ADMIN_DOMAIN : ALLOWED_MEMBER_DOMAIN;
 
     let userRecord: UserRecord | null = memoryUsersCache.get(uid) || null;
 
-    // Try reading/writing to Firestore users collection with timeout
+    // Leitura/atualização do documento no Firestore via Admin SDK
     try {
       const { adminDb: dbInstance, adminAuth: authInstance } = initFirebaseAdmin();
       const userDocRef = dbInstance.collection('users').doc(uid);
       
+      // Safely wrap the get() call to catch rejection and prevent unhandledRejection if it resolves/rejects after timeout
+      let isSettled = false;
+      const fetchPromise = userDocRef.get().catch(err => {
+        if (!isSettled) throw err;
+      });
+
       const userSnap = await Promise.race([
-        userDocRef.get(),
-        new Promise<any>((_, reject) => setTimeout(() => reject(new Error('Firestore timeout')), 1500))
+        fetchPromise.then(res => { isSettled = true; return res; }),
+        new Promise<any>((_, reject) => setTimeout(() => { isSettled = true; reject(new Error('Firestore timeout')); }, 1500))
       ]);
 
       if (!userSnap.exists) {
@@ -201,7 +215,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
           console.warn('Aviso ao persistir userDocRef no Firestore:', err);
         });
 
-        // Set custom claims if possible
+        // Configuração de custom claims no Firebase Auth
         if (authInstance && authInstance.setCustomUserClaims) {
           authInstance.setCustomUserClaims(uid, {
             role: assignedRole,
@@ -220,7 +234,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
           ...existingData,
           uid,
           email,
-          role: assignedRole, // Enforce domain-based role guarantee
+          role: assignedRole, // Garantia estrita de perfil alinhado ao domínio verificado
           domain,
           mustChangePassword: assignedRole === 'admin' ? false : Boolean(existingData?.mustChangePassword),
           isActive: existingData?.isActive !== false
@@ -252,7 +266,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
     }
 
     if (userRecord) {
-      userRecord.role = assignedRole; // Guarantee role always matches verified domain
+      userRecord.role = assignedRole;
       memoryUsersCache.set(uid, userRecord);
     }
 
@@ -273,7 +287,7 @@ export async function requireAuth(req: Request, res: Response, next: NextFunctio
 }
 
 /**
- * Middleware: Requires admin role
+ * Middleware: Requires admin role (@biti9.com.br)
  */
 export function requireAdmin(req: Request, res: Response, next: NextFunction) {
   if (!req.auth || req.auth.role !== 'admin') {
@@ -282,7 +296,7 @@ export function requireAdmin(req: Request, res: Response, next: NextFunction) {
       email: req.auth?.email,
       role: req.auth?.role
     });
-    return res.status(403).json({ error: 'Acesso restrito a administradores do sistema (@biti9.com.br).' });
+    return res.status(403).json({ error: `Acesso restrito a administradores do sistema (@${ALLOWED_ADMIN_DOMAIN}).` });
   }
   next();
 }

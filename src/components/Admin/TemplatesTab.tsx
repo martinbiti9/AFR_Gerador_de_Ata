@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { SchemaEditorModal } from './SchemaEditorModal';
 import { safeFetchJson, safeFetchBlob } from '../../utils/api';
+import { validateUploadFiles, ALLOWED_TEMPLATE_EXTENSIONS } from '../../utils/fileValidation';
 import { emitCriticalDbError } from '../../contexts/AlertContext';
 
 interface Props {
@@ -58,8 +59,11 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
   }, []);
 
   const handleFileSelect = (file: File) => {
-    if (!file.name.toLowerCase().endsWith('.docx')) {
-      setErrorMsg('Arquivo inválido: o template deve ser obrigatoriamente um documento do Word (.docx).');
+    const validation = validateUploadFiles([file], ALLOWED_TEMPLATE_EXTENSIONS, 1, 15 * 1024 * 1024);
+    if (!validation.valid) {
+      setErrorMsg(validation.error || 'Arquivo de template inválido. Deve ser um documento Word (.docx) de até 15 MB.');
+      setTemplateFile(null);
+      if (fileInputRef.current) fileInputRef.current.value = '';
       return;
     }
     setErrorMsg('');
@@ -81,6 +85,12 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
     e.preventDefault();
     if (!templateFile) {
       setErrorMsg('Selecione obrigatoriamente um arquivo .docx para upload do novo template.');
+      return;
+    }
+
+    const validation = validateUploadFiles([templateFile], ALLOWED_TEMPLATE_EXTENSIONS, 1, 15 * 1024 * 1024);
+    if (!validation.valid) {
+      setErrorMsg(validation.error || 'Arquivo de template inválido.');
       return;
     }
 

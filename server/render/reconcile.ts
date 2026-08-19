@@ -1,5 +1,5 @@
 import { TemplateSchema } from '../types/template';
-import { blocosParaOoxml, itemParaBlocos } from './richText';
+import { blocosParaOoxml, itemParaBlocos, topicoParaBlocos } from './richText';
 
 export interface ReconciledData {
   payload: Record<string, any>;
@@ -30,55 +30,47 @@ export function reconcilePayload(
   const servico = abertura?.servico ? String(abertura.servico).trim() : '';
   const rm = abertura?.rm ? String(abertura.rm).trim() : '';
   const cot = abertura?.cot ? String(abertura.cot).trim() : '';
-  const ataNumero = abertura?.ataNumero ? String(abertura.ataNumero).trim() : '01';
-  const dataReuniao = abertura?.dataReuniao || abertura?.data || '09/01/2025';
-  const folha = abertura?.folha || '01';
-  const horaReuniao = abertura?.horario || abertura?.hora || abertura?.horaAbertura || '10:30h';
-  const horaAbertura = abertura?.horaAbertura || horaReuniao || '10:30h';
-  const horaEncerramento = abertura?.horaEncerramento || '';
-  const localReuniao = abertura?.local || abertura?.localReuniao || 'Online - Teams';
-  const linkReuniao = abertura?.linkReuniao || abertura?.link || '';
+  const ataNumero = abertura?.ataNumero ? String(abertura.ataNumero).trim() : null;
+  const dataReuniao = abertura?.dataReuniao || abertura?.data || null;
+  const folha = abertura?.folha ? String(abertura.folha).trim() : null;
+  const horaReuniao = abertura?.horario || abertura?.hora || abertura?.horaAbertura || null;
+  const horaAbertura = abertura?.horaAbertura || horaReuniao || null;
+  const horaEncerramento = abertura?.horaEncerramento || null;
+  const localReuniao = abertura?.local || abertura?.localReuniao || null;
+  const linkReuniao = abertura?.linkReuniao || abertura?.link || null;
 
   // Commercial values
   const valores = abertura?.valoresComerciais || {};
-  const valorTotal = valores.valorTotal || 'R$ 2.782.400,00';
-  const valorServicos = valores.valorServicos || '';
-  const valorIndustrializacao = valores.valorIndustrializacao || '';
-  const valorVendaMercantil = valores.valorVendaMercantil || '';
-  const valorLocacao = valores.valorLocacao || '';
-  const valorFretes = valores.valorFretes || '';
-  const valorGerenciamento = valores.valorGerenciamento || '';
-  const valorFaturamentoDireto = valores.valorFaturamentoDireto || '';
-  const sinalMobilizacao = valores.sinalMobilizacao || 'Via recibo ou NF? Como será descontado';
-  const condicaoPagamento = valores.condicaoPagamento || '35% Projeto; 35% contra aviso de liberação do material; 30% 14 dias após aviso; pagamento dias 10, 20 ou 30 exclusivamente via crédito em conta.';
-  const retencaoGarantia = valores.retencaoGarantia || '5% sobre o valor total da contratação. Liberação 180 dias após o Termo de Encerramento Definitivo.';
-  const riscoSacado = valores.riscoSacado || 'Risco sacado a 120 dias – aplicável apenas ao faturamento Afonso França. Taxa a.m. 1,311%.';
-  const reajuste = valores.reajuste || 'Fixo por 12 meses / fixo até o término da prestação dos serviços.';
+  const valorTotal = valores.valorTotal || null;
+  const valorServicos = valores.valorServicos || null;
+  const valorIndustrializacao = valores.valorIndustrializacao || null;
+  const valorVendaMercantil = valores.valorVendaMercantil || null;
+  const valorLocacao = valores.valorLocacao || null;
+  const valorFretes = valores.valorFretes || null;
+  const valorGerenciamento = valores.valorGerenciamento || null;
+  const valorFaturamentoDireto = valores.valorFaturamentoDireto || null;
+  const sinalMobilizacao = valores.sinalMobilizacao || null;
+  const condicaoPagamento = valores.condicaoPagamento || null;
+  const retencaoGarantia = valores.retencaoGarantia || null;
+  const riscoSacado = valores.riscoSacado || null;
+  const reajuste = valores.reajuste || null;
 
   // Milestones schedule
   const prazos = abertura?.prazosCronograma || {};
-  const prazoMobilizacao = prazos.mobilizacao || 'Início da mobilização conforme alinhado';
-  const prazoElaboracaoProjeto = prazos.elaboracaoProjeto || 'Conforme cronograma após aprovação';
-  const prazoAprovacaoProjeto = prazos.aprovacaoProjeto || 'xx dias após envio';
-  const prazoEntregaMaterial = prazos.entregaMaterial || 'dias a partir do pedido';
-  const prazoMedidasDefinitivas = prazos.medidasDefinitivas || 'dias após envio do pedido';
-  const prazoFabricacao = prazos.fabricacao || 'xx dias após aprovação do projeto';
-  const prazoExecucao = prazos.execucao || 'xx dias após mobilização';
-  const prazoComissionamento = prazos.comissionamento || 'Conforme cronograma';
-  const prazoOperacaoAssistida = prazos.operacaoAssistida || 'Conforme cronograma';
+  const prazoMobilizacao = prazos.mobilizacao || null;
+  const prazoElaboracaoProjeto = prazos.elaboracaoProjeto || null;
+  const prazoAprovacaoProjeto = prazos.aprovacaoProjeto || null;
+  const prazoEntregaMaterial = prazos.entregaMaterial || null;
+  const prazoMedidasDefinitivas = prazos.medidasDefinitivas || null;
+  const prazoFabricacao = prazos.fabricacao || null;
+  const prazoExecucao = prazos.execucao || null;
+  const prazoComissionamento = prazos.comissionamento || null;
+  const prazoOperacaoAssistida = prazos.operacaoAssistida || null;
 
-  // Participants loop
-  const rawParticipantes = Array.isArray(abertura?.participantes) && abertura.participantes.length > 0
-    ? abertura.participantes
-    : [
-        {
-          nome: 'Thais Louise Barroso',
-          cargoDepto: 'SUPRIMENTOS',
-          empresa: 'Afonso França',
-          email: 'thais.barroso@afonsofranca.com.br',
-          visto: 'Visto'
-        }
-      ];
+  // Participants list - sem participante fake/default hardcoded
+  const rawParticipantes: any[] = Array.isArray(abertura?.participantes)
+    ? abertura.participantes.filter((p: any) => p && (p.nome || p.empresa || p.email))
+    : [];
 
   const participantesList = rawParticipantes.map((p: any, idx: number) => ({
     index: idx + 1,
@@ -94,10 +86,38 @@ export function reconcilePayload(
     visto: p.visto || ''
   }));
 
-  // Get base formatting from schema loops if present
+  // Agrupa participantes de 2 em 2 para a tabela de 6 colunas (participantesPares)
+  const participantesPares: any[] = [];
+  if (participantesList.length > 0) {
+    for (let i = 0; i < participantesList.length; i += 2) {
+      const p1 = participantesList[i];
+      const p2 = participantesList[i + 1] || null;
+      participantesPares.push({
+        p1Nome: p1.nome || '',
+        p1EmpresaEmail: p1.empresaEmail || '',
+        p1Visto: p1.visto || 'Visto',
+        p2Nome: p2 ? (p2.nome || '') : '',
+        p2EmpresaEmail: p2 ? (p2.empresaEmail || '') : '',
+        p2Visto: p2 ? (p2.visto || 'Visto') : ''
+      });
+    }
+  } else {
+    // Lista vazia gera uma única linha de par vazio
+    participantesPares.push({
+      p1Nome: '',
+      p1EmpresaEmail: '',
+      p1Visto: '',
+      p2Nome: '',
+      p2EmpresaEmail: '',
+      p2Visto: ''
+    });
+  }
+
+  // Get base formatting and bulletNumId from schema loops if present
   const mainLoop = schema?.loops?.find(l => ['itens', 'topics', 'agreeditems'].includes(l.tag.toLowerCase()));
   const basePPr = mainLoop?.basePPr || '';
   const baseRPr = mainLoop?.baseRPr || '';
+  const bulletNumId = schema?.bulletNumId ?? null;
 
   // 1. Build Topics List
   const rawTopics = analysisResult?.topics || [];
@@ -108,8 +128,8 @@ export function reconcilePayload(
     const excecaoAdmitida = t.excecaoAdmitida || t.excecao || '';
     const pontoAtencao = t.pontoAtencao || t.atencao || '';
     const perguntaFornecedor = t.perguntaFornecedor || t.pergunta || '';
-    const responsavel = t.responsavel || 'Fornecedor / Engenharia';
-    const prazo = t.prazo || 'Conforme cronograma';
+    const responsavel = t.responsavel || null;
+    const prazo = t.prazo || null;
 
     const blocos = t.blocos && Array.isArray(t.blocos) && t.blocos.length > 0
       ? t.blocos
@@ -118,11 +138,11 @@ export function reconcilePayload(
           excecao: excecaoAdmitida,
           atencao: pontoAtencao,
           pergunta: perguntaFornecedor,
-          responsavel,
-          prazo
+          responsavel: responsavel || undefined,
+          prazo: prazo || undefined
         });
 
-    const corpoXml = blocosParaOoxml(blocos, basePPr, baseRPr);
+    const corpoXml = blocosParaOoxml(blocos, basePPr, baseRPr, bulletNumId);
 
     return {
       index: idx + 1,
@@ -137,8 +157,8 @@ export function reconcilePayload(
       pontoAtencao,
       perguntaFornecedor,
       source: t.source || 'Check List',
-      responsavel,
-      prazo,
+      responsavel: responsavel || '[A DEFINIR]',
+      prazo: prazo || '[A DEFINIR]',
       blocos,
       corpoXml,
       '@corpoXml': corpoXml
@@ -152,12 +172,18 @@ export function reconcilePayload(
     const sev = (d.severity || d.severidade || 'MEDIA').toUpperCase();
     const desc = d.description || d.descricao || '';
     const title = `Divergência [${sev}]`;
+    const responsavel = d.responsavel || null;
+    const prazo = d.prazo || null;
 
     const blocos = d.blocos && Array.isArray(d.blocos) && d.blocos.length > 0
       ? d.blocos
-      : itemParaBlocos(title, desc, { atencao: `Severidade: ${sev}`, responsavel: 'Fornecedor' });
+      : itemParaBlocos(title, desc, {
+          atencao: `Severidade: ${sev}`,
+          responsavel: responsavel || undefined,
+          prazo: prazo || undefined
+        });
 
-    const corpoXml = blocosParaOoxml(blocos, basePPr, baseRPr);
+    const corpoXml = blocosParaOoxml(blocos, basePPr, baseRPr, bulletNumId);
 
     return {
       index: idx + 1,
@@ -171,8 +197,8 @@ export function reconcilePayload(
       title,
       titulo: title,
       source: d.source || 'Proposta Comercial',
-      responsavel: 'Fornecedor / Engenharia',
-      prazo: 'Na reunião',
+      responsavel: responsavel || '[A DEFINIR]',
+      prazo: prazo || '[A DEFINIR]',
       blocos,
       corpoXml,
       '@corpoXml': corpoXml
@@ -184,16 +210,19 @@ export function reconcilePayload(
   const agreedList = rawAgreed.map((it: any, idx: number) => {
     const num = it?.num ? String(it.num) : String(idx + 1).padStart(2, '0');
     const isObj = typeof it === 'object' && it !== null;
-    const textVal = isObj ? (it.descricao || it.text || it.titulo || '') : String(it || '');
-    const titleVal = isObj && it.titulo ? it.titulo : `Item Acordado ${idx + 1}`;
-    const resp = isObj && it.responsavel ? it.responsavel : 'Informativo / Contratada';
-    const prz = isObj && it.prazo ? it.prazo : 'Conforme cronograma';
+    const textVal = isObj ? (it.descricao || it.text || it.titulo || it.title || '') : String(it || '');
+    const titleVal = isObj ? (it.titulo || it.title || `Item Acordado ${idx + 1}`) : `Item Acordado ${idx + 1}`;
+    const resp = isObj && it.responsavel ? it.responsavel : null;
+    const prz = isObj && it.prazo ? it.prazo : null;
 
     const blocos = isObj && Array.isArray(it.blocos) && it.blocos.length > 0
       ? it.blocos
-      : itemParaBlocos(titleVal, textVal, { responsavel: resp, prazo: prz });
+      : itemParaBlocos(titleVal, textVal, {
+          responsavel: resp || undefined,
+          prazo: prz || undefined
+        });
 
-    const corpoXml = blocosParaOoxml(blocos, basePPr, baseRPr);
+    const corpoXml = blocosParaOoxml(blocos, basePPr, baseRPr, bulletNumId);
 
     return {
       index: idx + 1,
@@ -205,8 +234,8 @@ export function reconcilePayload(
       descricao: textVal,
       title: titleVal,
       titulo: titleVal,
-      responsavel: resp,
-      prazo: prz,
+      responsavel: resp || '[A DEFINIR]',
+      prazo: prz || '[A DEFINIR]',
       blocos,
       corpoXml,
       '@corpoXml': corpoXml
@@ -218,16 +247,22 @@ export function reconcilePayload(
   const pendingList = rawPending.map((it: any, idx: number) => {
     const num = it?.num ? String(it.num) : String(idx + 1).padStart(2, '0');
     const isObj = typeof it === 'object' && it !== null;
-    const textVal = isObj ? (it.descricao || it.text || it.titulo || '') : String(it || '');
-    const titleVal = isObj && it.titulo ? it.titulo : `Pendência ${idx + 1}`;
-    const resp = isObj && it.responsavel ? it.responsavel : 'Fornecedor / Engenharia';
-    const prz = isObj && it.prazo ? it.prazo : 'A definir';
+    const textVal = isObj ? (it.descricao || it.text || it.titulo || it.title || '') : String(it || '');
+    const titleVal = isObj ? (it.titulo || it.title || `Pendência ${idx + 1}`) : `Pendência ${idx + 1}`;
+    const resp = isObj && it.responsavel ? it.responsavel : null;
+    const prz = isObj && it.prazo ? it.prazo : null;
 
     const blocos = isObj && Array.isArray(it.blocos) && it.blocos.length > 0
       ? it.blocos
-      : itemParaBlocos(titleVal, textVal, { atencao: `PENDÊNCIA: ${textVal}`, responsavel: resp, prazo: prz });
+      : topicoParaBlocos({
+          titulo: titleVal,
+          situacao: 'PENDENTE',
+          textoAta: textVal,
+          responsavel: resp,
+          prazo: prz
+        });
 
-    const corpoXml = blocosParaOoxml(blocos, basePPr, baseRPr);
+    const corpoXml = blocosParaOoxml(blocos, basePPr, baseRPr, bulletNumId);
 
     return {
       index: idx + 1,
@@ -239,8 +274,9 @@ export function reconcilePayload(
       descricao: textVal,
       title: titleVal,
       titulo: titleVal,
-      responsavel: resp,
-      prazo: prz,
+      situacao: 'PENDENTE',
+      responsavel: resp || '[A DEFINIR NA REUNIÃO]',
+      prazo: prz || '[A DEFINIR NA REUNIÃO]',
       blocos,
       corpoXml,
       '@corpoXml': corpoXml
@@ -251,6 +287,43 @@ export function reconcilePayload(
   let masterItensList: any[] = [];
   if (isPreAta) {
     masterItensList = [...topicsList, ...divergencesList];
+  } else if (Array.isArray(finalData?.topicos) && finalData.topicos.length > 0) {
+    masterItensList = finalData.topicos.map((top: any, idx: number) => {
+      const num = String(idx + 1).padStart(2, '0');
+      const titleVal = top.titulo || top.title || `Item ${idx + 1}`;
+      const textVal = top.textoAta || top.descricao || '';
+      const resp = top.responsavel || null;
+      const prz = top.prazo || null;
+      const blocos = Array.isArray(top.blocos) && top.blocos.length > 0
+        ? top.blocos
+        : topicoParaBlocos({
+            topicoId: top.topicoId,
+            titulo: titleVal,
+            situacao: top.situacao,
+            textoAta: textVal,
+            camposADefinir: top.camposADefinir,
+            responsavel: resp,
+            prazo: prz
+          });
+      const corpoXml = blocosParaOoxml(blocos, basePPr, baseRPr, bulletNumId);
+      return {
+        index: idx + 1,
+        num,
+        item: num,
+        numero: num,
+        text: textVal,
+        texto: textVal,
+        descricao: textVal,
+        title: titleVal,
+        titulo: titleVal,
+        situacao: top.situacao,
+        responsavel: resp || (top.situacao === 'PENDENTE' ? '[A DEFINIR NA REUNIÃO]' : '[A DEFINIR]'),
+        prazo: prz || (top.situacao === 'PENDENTE' ? '[A DEFINIR NA REUNIÃO]' : '[A DEFINIR]'),
+        blocos,
+        corpoXml,
+        '@corpoXml': corpoXml
+      };
+    });
   } else {
     if (agreedList.length > 0 || pendingList.length > 0) {
       masterItensList = [...agreedList, ...pendingList];
@@ -270,8 +343,8 @@ export function reconcilePayload(
 
   // Summary notes
   const resumoTexto = abertura?.resumoExecutivo || (isPreAta
-    ? (templateIntro || 'Esta Pré-Ata contém a análise de aderência das propostas comerciais frente ao check list de obrigações da obra, identificando regras acordadas, exceções admitidas e pontos de atenção para deliberação na reunião.')
-    : (finalData?.notes || (transcript ? `A reunião consolidou com sucesso o fechamento comercial e técnico para a execução do escopo do ${obraNome || 'Hospital Sabará'}.` : '')));
+    ? (templateIntro || null)
+    : (finalData?.notes || finalData?.resumo || null));
 
   // Plain text aggregates
   const topicsText = topicsList.map((t: any) =>
@@ -391,6 +464,8 @@ export function reconcilePayload(
     participantes: participantesList,
     PARTICIPANTES: participantesList,
     presenca: participantesList,
+    participantesPares,
+    PARTICIPANTES_PARES: participantesPares,
 
     // Resumo
     resumo: resumoTexto || null,

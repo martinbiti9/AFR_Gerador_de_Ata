@@ -89,7 +89,7 @@ export async function safeFetchJson<T = any>(
 
   // 3. Handle 403 Forbidden
   if (res.status === 403) {
-    let forbiddenMsg = 'Você não tem permissão para esta operação.';
+    let forbiddenMsg = 'Acesso não autorizado ou permissão insuficiente para esta operação.';
     try {
       const clone = res.clone();
       const errData = await clone.json();
@@ -97,7 +97,9 @@ export async function safeFetchJson<T = any>(
     } catch {
       try {
         const rawText = await res.text();
-        if (rawText && !rawText.includes('<!DOCTYPE')) forbiddenMsg = rawText;
+        if (rawText && !rawText.includes('<!DOCTYPE') && !rawText.includes('<html') && !rawText.includes('Forbidden')) {
+          forbiddenMsg = rawText;
+        }
       } catch {}
     }
     throw new Error(forbiddenMsg);

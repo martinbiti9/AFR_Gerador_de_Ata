@@ -1,10 +1,11 @@
 import PizZip from 'pizzip';
 import mammoth from 'mammoth';
 import { addLog } from './logger';
-import { renderAtaDocument } from './render/renderAta';
+import { renderAtaDocument, mergeAdjacentRuns } from './render/renderAta';
 import { buildDefaultSchema } from './templateRepository';
 import { TemplateSchema, TableInspection, TableInspectionRow } from './types/template';
 import { findBlocks, extractCellFormatting } from './render/injectLoop';
+import { extrairBulletNumId } from './render/richText';
 
 // ================= XML ESCAPING & UTILITIES =================
 
@@ -95,43 +96,62 @@ export async function parseDocxTemplate(buffer: Buffer): Promise<DocxTemplateIns
   try {
     const zip = new PizZip(buffer);
     
-    // Read document.xml and headers/footers
+    // Read and merge document.xml and headers/footers
     const xmlFiles = Object.keys(zip.files).filter(filename => 
       filename.startsWith('word/') && filename.endsWith('.xml')
     );
 
-    let combinedXml = '';
+    const foundTags = new Set<string>();
+    const isGuid = (s: string) => /^[0-9A-F]{8}-[0-9A-F]{4}-/i.test(s);
+    const isGenericX = (s: string) => /^x+$/i.test(s);
+
+    const extractedTexts: string[] = [];
+
     for (const filename of xmlFiles) {
       try {
-        const content = zip.files[filename].asText();
-        combinedXml += ' ' + content;
+        let content = zip.files[filename].asText();
+        content = mergeAdjacentRuns(content);
+        const tMatches = content.match(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/gi) || [];
+        for (const t of tMatches) {
+          const inner = t.replace(/<[^>]+>/g, '').trim();
+          if (inner) extractedTexts.push(inner);
+        }
       } catch {
         // ignore
       }
     }
 
-    // Extract tags matching {tag}, {/tag}, {#tag}, {^tag}, [TAG], <<TAG>>
-    const foundTags = new Set<string>();
+    const combinedTextNodes = extractedTexts.join(' ');
 
+    // Extract curly tags: {tag}, {#tag}, {/tag}
     const curlyTagRegex = /\{([#^/]?[\w.\-_@]+)\}/g;
     let match;
-    while ((match = curlyTagRegex.exec(combinedXml)) !== null) {
+    while ((match = curlyTagRegex.exec(combinedTextNodes)) !== null) {
       const cleanTag = match[1].replace(/^[#^/@]/, '').trim();
-      if (cleanTag && cleanTag.length < 60) {
+      if (cleanTag && cleanTag.length < 60 && !isGuid(cleanTag) && !isGenericX(cleanTag)) {
         foundTags.add(cleanTag);
       }
     }
 
+    // Extract bracket tags: [TAG]
     const bracketTagRegex = /\[([A-Za-z0-9_.\-\sÀ-ÿ]{2,60})\]/g;
-    while ((match = bracketTagRegex.exec(combinedXml)) !== null) {
-      const cleanTag = match[1].replace(/<[^>]+>/g, '').trim();
-      // Ignore generic xx / xxx
-      if (cleanTag && cleanTag.length < 60 && !cleanTag.includes('/') && !/^x+$/i.test(cleanTag)) {
+    while ((match = bracketTagRegex.exec(combinedTextNodes)) !== null) {
+      const cleanTag = match[1].trim();
+      if (cleanTag && cleanTag.length < 60 && !cleanTag.includes('/') && !isGuid(cleanTag) && !isGenericX(cleanTag)) {
         foundTags.add(cleanTag);
       }
     }
 
-    // Extract raw text via Mammoth to verify human-readable content
+    // Extract guillemet tags: <<TAG>>
+    const guillemetTagRegex = /<<([A-Za-z0-9_.\-\sÀ-ÿ]{2,60})>>/g;
+    while ((match = guillemetTagRegex.exec(combinedTextNodes)) !== null) {
+      const cleanTag = match[1].trim();
+      if (cleanTag && cleanTag.length < 60 && !isGuid(cleanTag) && !isGenericX(cleanTag)) {
+        foundTags.add(cleanTag);
+      }
+    }
+
+    // Extract raw text via Mammoth to verify human-readable content as complementary source
     let rawText = '';
     try {
       const mammothResult = await mammoth.extractRawText({ buffer });
@@ -144,7 +164,7 @@ export async function parseDocxTemplate(buffer: Buffer): Promise<DocxTemplateIns
     const textBracketRegex = /\[([A-Za-z0-9_.\-\sÀ-ÿ]{2,60})\]/g;
     while ((match = textBracketRegex.exec(rawText)) !== null) {
       const clean = match[1].trim();
-      if (clean && clean.length < 60 && !/^x+$/i.test(clean)) {
+      if (clean && clean.length < 60 && !isGuid(clean) && !isGenericX(clean)) {
         foundTags.add(clean);
       }
     }
@@ -193,11 +213,28 @@ export async function parseDocxTemplate(buffer: Buffer): Promise<DocxTemplateIns
         }
       }
 
+      // Extrai basePPr e baseRPr da célula 1 da linha 1 (protótipo real)
+      let basePPr: string | undefined;
+      let baseRPr: string | undefined;
+      if (trBlocks.length > 1) {
+        const protoTrXml = tblXml.slice(trBlocks[1].start, trBlocks[1].end);
+        const protoTcBlocks = findBlocks(protoTrXml, 'w:tc');
+        const targetTc = protoTcBlocks.length > 1 ? protoTcBlocks[1] : protoTcBlocks[0];
+        if (targetTc) {
+          const tcXml = protoTrXml.slice(targetTc.start, targetTc.end);
+          const fmt = extractCellFormatting(tcXml);
+          basePPr = fmt.basePPr;
+          baseRPr = fmt.baseRPr;
+        }
+      }
+
       inspectedTables.push({
         index: tIdx,
         rowCount: trBlocks.length,
         columnCount: maxCols,
-        rows
+        rows,
+        basePPr,
+        baseRPr
       });
     }
 
@@ -206,8 +243,11 @@ export async function parseDocxTemplate(buffer: Buffer): Promise<DocxTemplateIns
       ['topics', 'divergences', 'agreeditems', 'pendingitems', 'itens', 'divergencias', 'acordos', 'pendencias', 'participantes'].includes(t.toLowerCase())
     );
 
+    const numberingXml = zip.files['word/numbering.xml']?.asText();
+    const bulletNumId = extrairBulletNumId(numberingXml);
+
     const placeholderMap = buildInitialPlaceholderMap(detectedPlaceholders);
-    const initialSchema = buildDefaultSchema('template-init', detectedPlaceholders, inspectedTables);
+    const initialSchema = buildDefaultSchema('template-init', detectedPlaceholders, inspectedTables, bulletNumId);
 
     const summary = `DOCX carregado: ${paragraphsCount} parágrafos, ${tablesCount} tabela(s) e ${detectedPlaceholders.length} variáveis identificadas (${detectedPlaceholders.slice(0, 8).join(', ')}${detectedPlaceholders.length > 8 ? '...' : ''}).`;
 

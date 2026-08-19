@@ -7,10 +7,13 @@ import {
   analyzeProposal, 
   generateFinalAta, 
   extractDocumentMetadata,
-  extractTextFromUploadedFiles
+  extractTextFromUploadedFiles,
+  chatWithAssistant,
+  processSonnetExtract
 } from './gemini';
 import { parseDocxTemplate } from './docx';
 import { renderAtaDocument, RenderValidationError, DocxRenderError } from './render/renderAta';
+import { gerarVersaoLimpaDocx, validarAtaParaExportacaoLimpa } from './render/cleanVersion';
 import {
   getTemplateVersionsFromDb,
   getActiveTemplateFromDb,
@@ -26,7 +29,9 @@ import {
   saveMeetingToStore,
   getMeetingsFromStore,
   getMeetingById,
-  deleteMeetingFromStore
+  deleteMeetingFromStore,
+  saveAtaState,
+  getAnalysisProgress
 } from './meetingStore';
 import {
   getActiveModels,
@@ -42,11 +47,37 @@ import {
   requirePasswordChanged,
 } from './auth';
 
+const ALLOWED_UPLOAD_EXTENSIONS = ['.pdf', '.docx', '.xlsx', '.csv', '.txt', '.md', '.mp3', '.wav', '.m4a'];
+
 const upload = multer({ 
   storage: multer.memoryStorage(),
   limits: {
-    fileSize: 100 * 1024 * 1024, // 100MB per file
-    files: 20
+    fileSize: 15 * 1024 * 1024, // 15MB per file
+    files: 5
+  },
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (ALLOWED_UPLOAD_EXTENSIONS.includes(ext)) {
+      cb(null, true);
+    } else {
+      cb(new Error(`Extensão não permitida para o arquivo "${file.originalname}". Formatos aceitos: ${ALLOWED_UPLOAD_EXTENSIONS.join(', ')}.`));
+    }
+  }
+});
+
+const uploadTemplate = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 15 * 1024 * 1024, // 15MB per file
+    files: 1
+  },
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (ext === '.docx') {
+      cb(null, true);
+    } else {
+      cb(new Error('Apenas arquivos de template do Word (.docx) são aceitos.'));
+    }
   }
 });
 
@@ -67,8 +98,22 @@ function validatePasswordStrength(password: string): { valid: boolean; error?: s
 }
 
 async function startServer() {
+  process.on('unhandledRejection', (reason: any) => {
+    console.warn('[UNHANDLED_REJECTION_CAUGHT]', reason?.message || reason);
+    try {
+      addLog('WARN', 'SYSTEM', `Unhandled Rejection capturado: ${reason?.message || reason}`, { error: String(reason) });
+    } catch {}
+  });
+
+  process.on('uncaughtException', (err: any) => {
+    console.warn('[UNCAUGHT_EXCEPTION_CAUGHT]', err?.message || err);
+    try {
+      addLog('ERROR', 'SYSTEM', `Uncaught Exception capturado: ${err?.message || err}`, { error: String(err) });
+    } catch {}
+  });
+
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   // Initialize Firebase Admin SDK
   try {
@@ -76,10 +121,10 @@ async function startServer() {
     console.log('Firebase Admin SDK inicializado com sucesso.');
     // Hydrate or perform initial persistence of administration configurations in Firestore
     initializeAdminConfigFromFirestore().catch((err) => {
-      console.warn('Aviso ao inicializar configurações no Firestore:', err);
+      console.warn('Aviso ao inicializar configurações no Firestore:', err?.message || err);
     });
-  } catch (adminErr) {
-    console.error('Erro ao inicializar Firebase Admin SDK:', adminErr);
+  } catch (adminErr: any) {
+    console.warn('Aviso ao inicializar Firebase Admin SDK (usando fallback local):', adminErr?.message || adminErr);
   }
 
   app.use(express.json({ limit: '100mb' }));
@@ -218,8 +263,9 @@ async function startServer() {
           mimeType: f.mimetype || 'application/pdf'
         }
       }));
-      
-      const result = await analyzeChecklist(inlineDataFiles);
+
+      const meetingId = (req.body?.meetingId || req.query?.meetingId) as string | undefined;
+      const result = await analyzeChecklist(inlineDataFiles, meetingId);
       res.json(result);
     } catch (error: any) {
       console.error('Error analyzing checklist:', error);
@@ -256,7 +302,8 @@ async function startServer() {
         }
       }));
       
-      const result = await analyzeProposal(inlineDataFiles, checklist);
+      const meetingId = (req.body?.meetingId || req.query?.meetingId) as string | undefined;
+      const result = await analyzeProposal(inlineDataFiles, checklist, meetingId);
       res.json(result);
     } catch (error: any) {
       console.error('Error analyzing proposal:', error);
@@ -275,12 +322,22 @@ async function startServer() {
         });
       }
 
-      const { abertura, analysisResult, divergences, transcript } = req.body;
-      const ataData = await generateFinalAta(abertura, analysisResult, divergences, transcript);
+      const { abertura, analysisResult, divergences, transcript, meetingId } = req.body;
+      if (!transcript || !transcript.trim()) {
+        return res.status(422).json({
+          error: 'Transcrição da reunião ausente. Anexe a transcrição ou decida tópico a tópico na lista de verificação.',
+          code: 'TRANSCRIPT_REQUIRED'
+        });
+      }
+
+      const ataData = await generateFinalAta(abertura, analysisResult, divergences, transcript, meetingId);
       res.json(ataData);
     } catch (error: any) {
       console.error('Error drafting final ata:', error);
-      res.status(500).json({ error: error.message || 'Erro ao rascunhar Ata Final.' });
+      res.status(error.statusCode || 500).json({
+        error: error.message || 'Erro ao rascunhar Ata Final.',
+        code: error.code || 'INTERNAL_ERROR'
+      });
     }
   });
 
@@ -291,9 +348,23 @@ async function startServer() {
       const { abertura, analysisResult, divergences } = req.body;
       const { buffer, report } = await renderAtaDocument(abertura, analysisResult, divergences, null, '', true);
       
+      const isAdmin = (req as any).user?.role === 'admin';
+      const isForce = (req.query.force === '1' || req.query.force === 'true' || req.body?.force === true) && isAdmin;
+
+      if (!report.isVerified && !isForce) {
+        return res.status(422).json({
+          error: 'Documento reprovado no relatório de verificação de qualidade (V1-V8).',
+          code: 'DOCUMENT_VERIFICATION_FAILED',
+          report
+        });
+      }
+
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
       res.setHeader('Content-Disposition', 'attachment; filename=Pre-Ata.docx');
       res.setHeader('X-Document-Verified', report.isVerified ? 'true' : 'false');
+      if (isForce && !report.isVerified) {
+        res.setHeader('X-Document-Force-Generated', 'true');
+      }
       res.send(buffer);
     } catch (error: any) {
       if (error instanceof RenderValidationError) {
@@ -315,18 +386,48 @@ async function startServer() {
 
   app.post('/api/generate-final-ata', requireAuth, requirePasswordChanged, async (req, res) => {
     try {
-      const { abertura, analysisResult, divergences, transcript, finalAtaData } = req.body;
+      const { abertura, analysisResult, divergences, transcript, finalAtaData, meetingId } = req.body;
       
+      if (!transcript || !transcript.trim()) {
+        return res.status(422).json({
+          error: 'Transcrição da reunião ausente. Anexe a transcrição ou decida tópico a tópico na lista de verificação.',
+          code: 'TRANSCRIPT_REQUIRED'
+        });
+      }
+
       let ataData = finalAtaData;
       if (!ataData) {
-        ataData = await generateFinalAta(abertura, analysisResult, divergences, transcript);
+        ataData = await generateFinalAta(abertura, analysisResult, divergences, transcript, meetingId);
+      }
+
+      // Persiste o AtaState resultante em meetings/{id}/ataState antes do render
+      if (meetingId) {
+        try {
+          await saveAtaState(meetingId, ataData);
+        } catch (saveErr) {
+          console.warn('Aviso ao persistir AtaState da reunião:', saveErr);
+        }
       }
 
       const { buffer, report } = await renderAtaDocument(abertura, analysisResult, divergences, ataData, transcript, false);
       
+      const isAdmin = (req as any).user?.role === 'admin';
+      const isForce = (req.query.force === '1' || req.query.force === 'true' || req.body?.force === true) && isAdmin;
+
+      if (!report.isVerified && !isForce) {
+        return res.status(422).json({
+          error: 'Documento reprovado no relatório de verificação de qualidade (V1-V8).',
+          code: 'DOCUMENT_VERIFICATION_FAILED',
+          report
+        });
+      }
+
       res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
       res.setHeader('Content-Disposition', 'attachment; filename=Ata-Final.docx');
       res.setHeader('X-Document-Verified', report.isVerified ? 'true' : 'false');
+      if (isForce && !report.isVerified) {
+        res.setHeader('X-Document-Force-Generated', 'true');
+      }
       res.send(buffer);
     } catch (error: any) {
       if (error instanceof RenderValidationError) {
@@ -342,7 +443,91 @@ async function startServer() {
         });
       }
       console.error('Error generating final ata:', error);
-      res.status(500).json({ error: error.message || 'Erro ao gerar Ata Final.' });
+      res.status(error.statusCode || 500).json({
+        error: error.message || 'Erro ao gerar Ata Final.',
+        code: error.code || 'INTERNAL_ERROR'
+      });
+    }
+  });
+
+  app.post('/api/generate-final-ata-clean', requireAuth, requirePasswordChanged, async (req, res) => {
+    try {
+      const { abertura, analysisResult, divergences, transcript, finalAtaData, meetingId } = req.body;
+      
+      let ataData = finalAtaData;
+      if (!ataData) {
+        if (!transcript || !transcript.trim()) {
+          return res.status(422).json({
+            error: 'Transcrição da reunião ausente para processar a ata final.',
+            code: 'TRANSCRIPT_REQUIRED'
+          });
+        }
+        ataData = await generateFinalAta(abertura, analysisResult, divergences, transcript, meetingId);
+      }
+
+      // 1. Exige AtaState sem tópicos PENDENTE e sem camposADefinir
+      const validacao = validarAtaParaExportacaoLimpa(ataData);
+      if (!validacao.podeExportar) {
+        return res.status(422).json({
+          error: 'A exportação limpa para o fornecedor está bloqueada porque existem pendências não resolvidas ou marcadores [A DEFINIR] no documento.',
+          code: 'PENDENCIES_BLOCKING_CLEAN_EXPORT',
+          topicosPendentes: validacao.topicosPendentes,
+          camposADefinir: validacao.camposADefinir
+        });
+      }
+
+      // 2. Persiste AtaState se meetingId fornecido
+      if (meetingId) {
+        try {
+          await saveAtaState(meetingId, ataData);
+        } catch (saveErr) {
+          console.warn('Aviso ao persistir AtaState da reunião:', saveErr);
+        }
+      }
+
+      // 3. Renderiza o DOCX oficial
+      const { buffer, report } = await renderAtaDocument(abertura, analysisResult, divergences, ataData, transcript || '', false);
+
+      const isAdmin = (req as any).user?.role === 'admin';
+      const isForce = (req.query.force === '1' || req.query.force === 'true' || req.body?.force === true) && isAdmin;
+
+      if (!report.isVerified && !isForce) {
+        return res.status(422).json({
+          error: 'Documento reprovado no relatório de verificação de qualidade (V1-V8).',
+          code: 'DOCUMENT_VERIFICATION_FAILED',
+          report
+        });
+      }
+
+      // 4. Executa a limpeza dos runs vermelhos e valida V8
+      const { buffer: cleanBuffer } = gerarVersaoLimpaDocx(buffer);
+
+      res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document');
+      res.setHeader('Content-Disposition', 'attachment; filename=Ata-Final-Fornecedor-Limpa.docx');
+      res.setHeader('X-Document-Verified', report.isVerified ? 'true' : 'false');
+      res.setHeader('X-Document-Clean-Version', 'true');
+      if (isForce && !report.isVerified) {
+        res.setHeader('X-Document-Force-Generated', 'true');
+      }
+      res.send(cleanBuffer);
+    } catch (error: any) {
+      if (error instanceof RenderValidationError) {
+        return res.status(422).json({
+          error: error.message,
+          missingFields: error.missingFields
+        });
+      }
+      if (error instanceof DocxRenderError) {
+        return res.status(500).json({
+          error: error.message,
+          details: error.details
+        });
+      }
+      console.error('Error generating clean final ata:', error);
+      res.status(error.statusCode || 500).json({
+        error: error.message || 'Erro ao gerar Versão Limpa da Ata Final.',
+        code: error.code || 'INTERNAL_ERROR'
+      });
     }
   });
 
@@ -434,21 +619,30 @@ async function startServer() {
 
   // ================= MEETINGS / HISTÓRICO API =================
   
-  app.get('/api/meetings', requireAuth, requirePasswordChanged, (req, res) => {
+  app.get('/api/meetings', requireAuth, requirePasswordChanged, async (req, res) => {
     try {
       const search = req.query.search as string;
       const authUser = req.auth!;
-      const meetings = getMeetingsFromStore(search, { uid: authUser.uid, role: authUser.role });
+      const meetings = await getMeetingsFromStore(search, { uid: authUser.uid, role: authUser.role });
       res.json({ meetings });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  app.get('/api/meetings/:id', requireAuth, requirePasswordChanged, (req, res) => {
+  app.get('/api/meetings/:id/analysis-status', requireAuth, requirePasswordChanged, (req, res) => {
+    try {
+      const status = getAnalysisProgress(req.params.id);
+      res.json(status);
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  app.get('/api/meetings/:id', requireAuth, requirePasswordChanged, async (req, res) => {
     try {
       const authUser = req.auth!;
-      const meeting = getMeetingById(req.params.id, { uid: authUser.uid, role: authUser.role });
+      const meeting = await getMeetingById(req.params.id, { uid: authUser.uid, role: authUser.role });
       if (!meeting) {
         return res.status(404).json({ error: 'Reunião não encontrada no histórico.' });
       }
@@ -458,10 +652,10 @@ async function startServer() {
     }
   });
 
-  app.post('/api/meetings', requireAuth, requirePasswordChanged, (req, res) => {
+  app.post('/api/meetings', requireAuth, requirePasswordChanged, async (req, res) => {
     try {
       const authUser = req.auth!;
-      const meeting = saveMeetingToStore(req.body, {
+      const meeting = await saveMeetingToStore(req.body, {
         uid: authUser.uid,
         email: authUser.email,
         displayName: authUser.displayName
@@ -472,10 +666,10 @@ async function startServer() {
     }
   });
 
-  app.delete('/api/meetings/:id', requireAuth, requirePasswordChanged, (req, res) => {
+  app.delete('/api/meetings/:id', requireAuth, requirePasswordChanged, async (req, res) => {
     try {
       const authUser = req.auth!;
-      const deleted = deleteMeetingFromStore(req.params.id, { uid: authUser.uid, role: authUser.role });
+      const deleted = await deleteMeetingFromStore(req.params.id, { uid: authUser.uid, role: authUser.role });
       if (!deleted) {
         return res.status(404).json({ error: 'Reunião não encontrada para exclusão.' });
       }
@@ -495,18 +689,18 @@ async function startServer() {
     });
   });
 
-  app.post('/api/admin/config/models', requireAuth, requireAdmin, (req, res) => {
+  app.post('/api/admin/config/models', requireAuth, requireAdmin, async (req, res) => {
     try {
-      const updated = updateActiveModels(req.body);
+      const updated = await updateActiveModels(req.body);
       res.json({ success: true, models: updated });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
     }
   });
 
-  app.post('/api/admin/config/prompts', requireAuth, requireAdmin, (req, res) => {
+  app.post('/api/admin/config/prompts', requireAuth, requireAdmin, async (req, res) => {
     try {
-      const updated = updateActivePrompts(req.body);
+      const updated = await updateActivePrompts(req.body);
       res.json({ success: true, prompts: updated });
     } catch (error: any) {
       res.status(500).json({ error: error.message });
@@ -542,7 +736,7 @@ async function startServer() {
   });
 
   // 3. Firestore Templates & Schemas Management
-  app.get('/api/admin/templates', requireAuth, async (req, res) => {
+  app.get('/api/admin/templates', requireAuth, requireAdmin, async (req, res) => {
     try {
       const data = await getTemplateVersionsFromDb();
       res.json(data);
@@ -551,7 +745,7 @@ async function startServer() {
     }
   });
 
-  app.post('/api/admin/templates', requireAuth, requireAdmin, upload.single('templateFile'), async (req, res) => {
+  app.post('/api/admin/templates', requireAuth, requireAdmin, uploadTemplate.single('templateFile'), async (req, res) => {
     try {
       const file = req.file;
       const { name, description, companyName, primaryColor, tableHeaderBg, fontFamily, preAtaIntro, standardClauses, signatures } = req.body;
@@ -736,18 +930,91 @@ async function startServer() {
     }
   });
 
+  // ================= ASSISTANT CHATBOT & TRANSCRIPTION PROCESSOR =================
+
+  app.post('/api/chat', requireAuth, async (req, res) => {
+    try {
+      const { history, message } = req.body;
+      if (!message || !String(message).trim()) {
+        return res.status(400).json({ error: 'Mensagem é obrigatória para o assistente.' });
+      }
+
+      const uid = req.auth?.uid;
+      const role = req.auth?.role;
+      const userParam = uid && role ? { uid, role } : undefined;
+      const meetings = await getMeetingsFromStore('', userParam);
+      const meetingsContext = meetings.slice(0, 10).map((m, i) => {
+        const obra = m.obraCodigo ? `${m.obraCodigo} - ${m.obraNome || ''}` : (m.obraNome || 'Obra');
+        const forn = m.fornecedor || 'Fornecedor';
+        const data = m.createdAt ? m.createdAt.slice(0, 10) : '';
+        const pendencias = m.finalAtaData?.pendingItems?.length || 0;
+        const acordados = m.finalAtaData?.agreedItems?.length || 0;
+        return `Ata ${i + 1}: Obra: ${obra} | Fornecedor: ${forn} | Data: ${data} | Acordados: ${acordados} | Pendências: ${pendencias}`;
+      }).join('\n');
+
+      const reply = await chatWithAssistant(history || [], String(message).trim(), meetingsContext);
+      res.json({ reply });
+    } catch (error: any) {
+      console.error('Error in /api/chat:', error);
+      res.status(500).json({ error: error.message || 'Erro ao processar consulta com o assistente.' });
+    }
+  });
+
+  app.post('/api/process-sonnet', requireAuth, requirePasswordChanged, async (req, res) => {
+    try {
+      const { textoAta } = req.body;
+      if (!textoAta || !String(textoAta).trim()) {
+        return res.status(400).json({ error: 'Texto da transcrição é obrigatório para processamento.' });
+      }
+
+      const resultado = await processSonnetExtract(String(textoAta).trim());
+      res.json({ success: true, resultado });
+    } catch (error: any) {
+      console.error('Error in /api/process-sonnet:', error);
+      res.status(500).json({ error: error.message || 'Erro ao processar transcrição com IA.' });
+    }
+  });
+
   // Explicit JSON 404 for unmatched API routes
   app.all('/api/*', (req, res) => {
     res.status(404).json({ error: `Rota de API não encontrada: ${req.method} ${req.path}` });
   });
 
-  // Global error handler for API routes
+  // Global error handler for API routes (including Multer validation errors)
   app.use((err: any, req: express.Request, res: express.Response, next: express.NextFunction) => {
     if (req.path.startsWith('/api')) {
       console.error('API Error:', err);
+
+      if (err instanceof multer.MulterError) {
+        if (err.code === 'LIMIT_FILE_SIZE') {
+          return res.status(422).json({
+            error: 'Arquivo excede o limite máximo permitido de 15 MB.',
+            code: 'FILE_TOO_LARGE'
+          });
+        }
+        if (err.code === 'LIMIT_FILE_COUNT') {
+          return res.status(422).json({
+            error: 'Quantidade de arquivos excede o limite máximo de 5 arquivos por envio.',
+            code: 'TOO_MANY_FILES'
+          });
+        }
+        return res.status(422).json({
+          error: `Erro no upload do arquivo: ${err.message}`,
+          code: err.code
+        });
+      }
+
+      if (err && typeof err.message === 'string' && err.message.includes('Extensão não permitida')) {
+        return res.status(422).json({
+          error: err.message,
+          code: 'INVALID_FILE_TYPE'
+        });
+      }
+
       const status = err.status || err.statusCode || 500;
       return res.status(status).json({ 
-        error: err.message || 'Erro interno no processamento da API.' 
+        error: err.message || 'Erro interno no processamento da API.',
+        code: err.code || 'INTERNAL_ERROR'
       });
     }
     next(err);

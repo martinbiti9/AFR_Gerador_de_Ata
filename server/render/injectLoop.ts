@@ -8,11 +8,21 @@ export function findBlocks(xml: string, tag: string): Array<{ start: number; end
   const out: Array<{ start: number; end: number }> = [];
   let depth = 0, start = -1, m: RegExpExecArray | null;
   while ((m = re.exec(xml)) !== null) {
-    if (m[0].startsWith('</')) {
+    const token = m[0];
+    if (token.endsWith('/>')) {
+      // Tag self-closing (<w:p .../>): abre e fecha no mesmo ponto
+      if (depth === 0) {
+        out.push({ start: m.index, end: m.index + token.length });
+      }
+      // Nunca incrementa depth para self-closing
+    } else if (token.startsWith('</')) {
       depth--;
-      if (depth === 0 && start >= 0) {
-        out.push({ start, end: m.index + m[0].length });
-        start = -1;
+      if (depth <= 0) {
+        depth = 0;
+        if (start >= 0) {
+          out.push({ start, end: m.index + token.length });
+          start = -1;
+        }
       }
     } else {
       if (depth === 0) start = m.index;

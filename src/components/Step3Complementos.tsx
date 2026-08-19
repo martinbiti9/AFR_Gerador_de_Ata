@@ -2,6 +2,7 @@ import React, { useState, useRef } from 'react';
 import { AppState, Divergence, AberturaData } from '../types';
 import { UploadCloud, ArrowRight, Loader2, AlertTriangle, Info, AlertOctagon, Check } from 'lucide-react';
 import { safeFetchJson } from '../utils/api';
+import { validateUploadFiles } from '../utils/fileValidation';
 
 interface Props {
   state: AppState;
@@ -16,13 +17,28 @@ export function Step3Complementos({ state, updateState, onMetadataDetected }: Pr
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleFileSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files) {
-      setFiles(Array.from(e.target.files));
+    if (e.target.files && e.target.files.length > 0) {
+      const selected = Array.from(e.target.files);
+      const validation = validateUploadFiles(selected);
+      if (!validation.valid) {
+        setError(validation.error || 'Arquivos selecionados inválidos.');
+        setFiles([]);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        return;
+      }
+      setError('');
+      setFiles(selected);
     }
   };
 
   const handleAnalyze = async () => {
     if (files.length === 0) return;
+
+    const validation = validateUploadFiles(files);
+    if (!validation.valid) {
+      setError(validation.error || 'Erro na validação dos arquivos.');
+      return;
+    }
     
     setLoading(true);
     setError('');

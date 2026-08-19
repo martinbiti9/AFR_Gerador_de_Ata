@@ -19,6 +19,7 @@ import {
   AlertCircle
 } from 'lucide-react';
 import { safeFetchJson, safeFetchBlob } from '../utils/api';
+import { validateUploadFiles } from '../utils/fileValidation';
 import { TemplateWarningModal } from './TemplateWarningModal';
 import { FinalAtaValidationModal } from './FinalAtaValidationModal';
 
@@ -167,6 +168,11 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
   const [loadingExtract, setLoadingExtract] = useState(false);
   const [loadingDraft, setLoadingDraft] = useState(false);
   const [loadingDocx, setLoadingDocx] = useState(false);
+  const [loadingCleanDocx, setLoadingCleanDocx] = useState(false);
+  const [cleanExportErrors, setCleanExportErrors] = useState<{
+    topicosPendentes: { topicoId: string; titulo: string }[];
+    camposADefinir: { topicoId: string; titulo: string; campos: string[] }[];
+  } | null>(null);
   const [error, setError] = useState('');
   
   // Template status
@@ -229,12 +235,22 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
 
   const handleFileSelect = async (e: React.ChangeEvent<HTMLInputElement>) => {
     if (!e.target.files || e.target.files.length === 0) return;
+
+    const selectedFiles = Array.from(e.target.files);
+    const validation = validateUploadFiles(selectedFiles);
+    if (!validation.valid) {
+      setError(validation.error || 'Arquivos selecionados inválidos.');
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+      return;
+    }
     
     setLoadingExtract(true);
     setError('');
     
     const formData = new FormData();
-    Array.from(e.target.files).forEach((file: File) => {
+    selectedFiles.forEach((file: File) => {
       formData.append('files', file);
     });
 
@@ -369,6 +385,44 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
       setError(errMsg);
     } finally {
       setLoadingDocx(false);
+    }
+  };
+
+  const generateCleanDocx = async () => {
+    setError('');
+    setCleanExportErrors(null);
+    setLoadingCleanDocx(true);
+
+    try {
+      const blob = await safeFetchBlob('/api/generate-final-ata-clean', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          abertura: state.abertura,
+          analysisResult: state.analysisResult,
+          divergences: state.divergences,
+          transcript,
+          finalAtaData: draftData,
+          meetingId: state.meetingId
+        })
+      });
+
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `Ata_Final_Fornecedor_Limpa_${state.abertura?.obraCodigo || 'Reuniao'}.docx`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.URL.revokeObjectURL(url);
+    } catch (err: any) {
+      const errMsg = err.message || 'Erro ao exportar Versão Limpa';
+      if (errMsg.includes('Template DOCX') || errMsg.includes('template')) {
+        setIsWarningModalOpen(true);
+      }
+      setError(errMsg);
+    } finally {
+      setLoadingCleanDocx(false);
     }
   };
 
@@ -891,36 +945,89 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
 
         {/* SOMENTE APÓS a transcrição ser analisada (draftData existente): Botão de Gerar e Baixar Ata Final renderizado diretamente ABAIXO */}
         {draftData && (
-          <div className="pt-4 border-t border-slate-100 flex flex-col sm:flex-row items-center justify-between gap-4 bg-blue-50/60 p-4 rounded-xl border border-blue-100 animate-in fade-in slide-in-from-top-2">
-            <div className="text-xs text-slate-600 space-y-0.5">
-              <p className="font-bold text-slate-800 flex items-center gap-1.5">
-                <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
-                Transcrição e Contextos Analisados com Sucesso
-              </p>
-              <p className="text-[11px] text-slate-500">
-                Os dados de Checklist, Divergências/Complementos e Transcrição foram estruturados e estão prontos para preencher o Template DOCX {activeTemplateName ? `("${activeTemplateName}")` : ''} com fidelidade total de layout.
-              </p>
+          <div className="pt-4 border-t border-slate-100 space-y-3 bg-blue-50/60 p-4 rounded-xl border border-blue-100 animate-in fade-in slide-in-from-top-2">
+            <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+              <div className="text-xs text-slate-600 space-y-0.5">
+                <p className="font-bold text-slate-800 flex items-center gap-1.5">
+                  <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
+                  Transcrição e Contextos Analisados com Sucesso
+                </p>
+                <p className="text-[11px] text-slate-500">
+                  Os dados foram estruturados. Gere a versão interna com pendências em vermelho ou exporte a versão limpa para o fornecedor.
+                </p>
+              </div>
+
+              <div className="flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={generateFinalDocx}
+                  disabled={loadingDocx || loadingCleanDocx}
+                  className="flex items-center justify-center gap-2 px-5 py-3 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg uppercase tracking-tight shadow-md shadow-blue-200 disabled:bg-slate-300 disabled:text-slate-500 disabled:shadow-none transition-all shrink-0"
+                  title="Gera a versão interna completa com itens pendentes destacados em vermelho (C00000)"
+                >
+                  {loadingDocx ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      Gerando DOCX...
+                    </>
+                  ) : (
+                    <>
+                      <FileDown size={16} />
+                      Ata Final Interna (.docx)
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={generateCleanDocx}
+                  disabled={loadingDocx || loadingCleanDocx}
+                  className="flex items-center justify-center gap-2 px-5 py-3 text-xs font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 border border-emerald-300 rounded-lg uppercase tracking-tight shadow-sm disabled:bg-slate-200 disabled:text-slate-400 disabled:border-transparent transition-all shrink-0"
+                  title="Gera a versão limpa do fornecedor (sem nenhum item em vermelho ou pendência)"
+                >
+                  {loadingCleanDocx ? (
+                    <>
+                      <Loader2 size={16} className="animate-spin" />
+                      Higienizando...
+                    </>
+                  ) : (
+                    <>
+                      <FileDown size={16} />
+                      Versão Limpa (Fornecedor)
+                    </>
+                  )}
+                </button>
+              </div>
             </div>
 
-            <button
-              type="button"
-              onClick={generateFinalDocx}
-              disabled={loadingDocx}
-              className="w-full sm:w-auto flex items-center justify-center gap-2 px-6 py-3 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg uppercase tracking-tight shadow-lg shadow-blue-200 disabled:bg-slate-300 disabled:text-slate-500 disabled:shadow-none transition-all shrink-0"
-              title="Gera e baixa o arquivo DOCX final preenchido a partir do template"
-            >
-              {loadingDocx ? (
-                <>
-                  <Loader2 size={18} className="animate-spin" />
-                  Gerando Documento DOCX...
-                </>
-              ) : (
-                <>
-                  <FileDown size={18} />
-                  Gerar e Baixar Ata Final (.docx)
-                </>
-              )}
-            </button>
+            {cleanExportErrors && (
+              <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900 space-y-1.5 animate-in fade-in">
+                <div className="flex items-center gap-2 font-bold text-amber-800">
+                  <AlertCircle size={15} className="text-amber-600 shrink-0" />
+                  <span>Exportação Limpa Bloqueada: Resolva as pendências abaixo</span>
+                </div>
+                {cleanExportErrors.topicosPendentes?.length > 0 && (
+                  <div>
+                    <span className="font-semibold">Tópicos com situação PENDENTE:</span>
+                    <ul className="list-disc list-inside ml-2 text-amber-800">
+                      {cleanExportErrors.topicosPendentes.map(t => (
+                        <li key={t.topicoId}>{t.titulo}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+                {cleanExportErrors.camposADefinir?.length > 0 && (
+                  <div>
+                    <span className="font-semibold">Marcadores [A DEFINIR] restantes:</span>
+                    <ul className="list-disc list-inside ml-2 text-amber-800">
+                      {cleanExportErrors.camposADefinir.map(c => (
+                        <li key={c.topicoId}>{c.titulo}: {c.campos.join(', ')}</li>
+                      ))}
+                    </ul>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         )}
       </div>

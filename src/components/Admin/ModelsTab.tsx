@@ -33,14 +33,14 @@ const AVAILABLE_GEMINI_MODELS = [
 const DEFAULT_PARAMS: Record<string, ModelStageConfig> = {
   checklistParams: {
     model: 'gemini-3.1-pro-preview',
-    temperature: 0.1,
+    temperature: 0.2,
     topP: 0.95,
     maxOutputTokens: 65536,
     thinkingBudget: 32768,
   },
   proposalParams: {
     model: 'gemini-3.1-pro-preview',
-    temperature: 0.1,
+    temperature: 0.2,
     topP: 0.95,
     maxOutputTokens: 65536,
     thinkingBudget: 32768,

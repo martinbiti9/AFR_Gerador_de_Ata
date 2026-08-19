@@ -2,7 +2,7 @@ export interface LogEntry {
   id: string;
   timestamp: string;
   level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG';
-  category: 'AI' | 'DOCX' | 'CHECKLIST' | 'PROPOSAL' | 'SYSTEM' | 'AUTH' | 'ADMIN';
+  category: 'AI' | 'DOCX' | 'CHECKLIST' | 'PROPOSAL' | 'SYSTEM' | 'AUTH' | 'ADMIN' | 'VALIDATOR';
   message: string;
   actorUid?: string;
   actorEmail?: string;
@@ -15,7 +15,7 @@ const MAX_LOGS = 300;
 
 export function addLog(
   level: 'INFO' | 'WARN' | 'ERROR' | 'DEBUG',
-  category: 'AI' | 'DOCX' | 'CHECKLIST' | 'PROPOSAL' | 'SYSTEM' | 'AUTH' | 'ADMIN',
+  category: 'AI' | 'DOCX' | 'CHECKLIST' | 'PROPOSAL' | 'SYSTEM' | 'AUTH' | 'ADMIN' | 'VALIDATOR',
   message: string,
   details?: any,
   actor?: { uid?: string; email?: string; role?: string }

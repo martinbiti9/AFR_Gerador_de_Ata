@@ -70,18 +70,17 @@ export interface TemplateConfig {
   rawTextPreview?: string;
 }
 
-// Persistent file path for templates and configs fallback database
+// Persistent file path for local disk cache fallback (cold start only)
 const DATA_DIR = path.resolve(process.cwd(), 'server', 'data');
-const TEMPLATES_FILE = path.join(DATA_DIR, 'templates.json');
 const CONFIGS_FILE = path.join(DATA_DIR, 'admin_config.json');
 
 function ensureDataDir() {
-  if (!fs.existsSync(DATA_DIR)) {
-    try {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
       fs.mkdirSync(DATA_DIR, { recursive: true });
-    } catch (err) {
-      console.error('Erro ao criar pasta data:', err);
     }
+  } catch {
+    // silent catch
   }
 }
 
@@ -89,62 +88,34 @@ function getFirestoreInstance() {
   try {
     const { adminDb } = initFirebaseAdmin();
     return adminDb;
-  } catch (err) {
+  } catch {
     return null;
   }
 }
 
-function loadPersistedTemplates(): { versions: TemplateConfig[]; activeId: string } {
-  try {
-    ensureDataDir();
-    if (fs.existsSync(TEMPLATES_FILE)) {
-      const raw = fs.readFileSync(TEMPLATES_FILE, 'utf-8');
-      const parsed = JSON.parse(raw);
-      if (Array.isArray(parsed.versions) && parsed.versions.length > 0) {
-        return {
-          versions: parsed.versions,
-          activeId: parsed.activeId || parsed.versions[0].id
-        };
-      }
-    }
-  } catch (err) {
-    console.error('Erro ao carregar templates persistidos do disco:', err);
-  }
-  return { versions: [], activeId: '' };
-}
-
-function persistTemplates(versions: TemplateConfig[], activeId: string) {
-  try {
-    ensureDataDir();
-    fs.writeFileSync(TEMPLATES_FILE, JSON.stringify({ versions, activeId }, null, 2), 'utf-8');
-  } catch (err) {
-    console.error('Erro ao salvar templates no disco:', err);
-  }
-}
-
-function loadPersistedAdminConfigs(): { models?: AIModelsConfig; prompts?: CustomPromptsConfig } {
+function loadLocalDiskCache(): { models?: AIModelsConfig; prompts?: CustomPromptsConfig } {
   try {
     ensureDataDir();
     if (fs.existsSync(CONFIGS_FILE)) {
       const raw = fs.readFileSync(CONFIGS_FILE, 'utf-8');
       return JSON.parse(raw);
     }
-  } catch (err) {
-    console.error('Erro ao carregar admin configs do disco:', err);
+  } catch {
+    // silent catch
   }
   return {};
 }
 
-function persistAdminConfigsLocally(models: AIModelsConfig, prompts: CustomPromptsConfig) {
+function persistLocalDiskCacheSilently(models: AIModelsConfig, prompts: CustomPromptsConfig) {
   try {
     ensureDataDir();
     fs.writeFileSync(CONFIGS_FILE, JSON.stringify({ models, prompts, updatedAt: new Date().toISOString() }, null, 2), 'utf-8');
-  } catch (err) {
-    console.error('Erro ao salvar admin configs no disco:', err);
+  } catch {
+    // silent catch
   }
 }
 
-// In-Memory active stores with full parameter configurations (Maximum Tokens & Reasoning by default)
+// In-Memory active defaults
 let activeModels: AIModelsConfig = {
   checklistModel: process.env.AI_CHECKLIST_MODEL || 'gemini-3.1-pro-preview',
   proposalModel: process.env.AI_PROPOSAL_MODEL || 'gemini-3.1-pro-preview',
@@ -154,14 +125,14 @@ let activeModels: AIModelsConfig = {
 
   checklistParams: {
     model: process.env.AI_CHECKLIST_MODEL || 'gemini-3.1-pro-preview',
-    temperature: 0.1,
+    temperature: 0.2,
     topP: 0.95,
     maxOutputTokens: 65536,
     thinkingBudget: 32768,
   },
   proposalParams: {
     model: process.env.AI_PROPOSAL_MODEL || 'gemini-3.1-pro-preview',
-    temperature: 0.1,
+    temperature: 0.2,
     topP: 0.95,
     maxOutputTokens: 65536,
     thinkingBudget: 32768,
@@ -197,122 +168,124 @@ let activePrompts: CustomPromptsConfig = {
   chatbotInstructions: 'Você é um assistente especialista em suprimentos e atas de reunião de uma construtora. Conhece a estrutura de templates DOCX/XML e auxilia no preenchimento de termos contratuais e consulta a atas anteriores.'
 };
 
-// Initialize from local disk cache first
-const localCached = loadPersistedAdminConfigs();
-if (localCached.models) {
-  activeModels = { ...activeModels, ...localCached.models };
-}
-if (localCached.prompts) {
-  activePrompts = { ...activePrompts, ...localCached.prompts };
-}
+// Cache TTL State (60 segundos)
+const CACHE_TTL_MS = 60 * 1000;
+let lastModelsSyncTime = 0;
+let lastPromptsSyncTime = 0;
 
-// Initialize persisted templates from database (NO mock template)
-const loadedTemplateData = loadPersistedTemplates();
-let templateVersions: TemplateConfig[] = loadedTemplateData.versions;
-let activeTemplateId: string = loadedTemplateData.activeId;
-
-/**
- * Persists Models and Prompts directly to Firestore collection `config`
- */
-async function saveModelsToFirestore(models: AIModelsConfig) {
-  try {
-    const db = getFirestoreInstance();
-    if (!db) return;
-    await db.collection('config').doc('ai_models').set({
-      ...models,
-      updatedAt: new Date().toISOString(),
-    }, { merge: true });
-  } catch (err: any) {
-    if (!err.message?.includes('PERMISSION_DENIED')) {
-      console.warn('Aviso: Falha ao persistir ai_models no Firestore:', err.message);
-    }
-  }
+// Cold-start fallback from disk
+const coldCache = loadLocalDiskCache();
+if (coldCache.models) {
+  activeModels = { ...activeModels, ...coldCache.models };
 }
-
-async function savePromptsToFirestore(prompts: CustomPromptsConfig) {
-  try {
-    const db = getFirestoreInstance();
-    if (!db) return;
-    await db.collection('config').doc('custom_prompts').set({
-      ...prompts,
-      updatedAt: new Date().toISOString(),
-    }, { merge: true });
-  } catch (err: any) {
-    if (!err.message?.includes('PERMISSION_DENIED')) {
-      console.warn('Aviso: Falha ao persistir custom_prompts no Firestore:', err.message);
-    }
-  }
+if (coldCache.prompts) {
+  activePrompts = { ...activePrompts, ...coldCache.prompts };
 }
 
 /**
- * Initializes Firestore synchronization for administration settings on server startup.
- * If data does not exist in Firestore, performs the initial persistence seed.
+ * Sincroniza Models do Firestore com validação de TTL de 60 segundos.
  */
-export async function initializeAdminConfigFromFirestore(): Promise<void> {
+export async function syncModelsFromFirestore(force: boolean = false): Promise<AIModelsConfig> {
+  const now = Date.now();
+  if (!force && (now - lastModelsSyncTime < CACHE_TTL_MS)) {
+    return { ...activeModels };
+  }
+
+  const db = getFirestoreInstance();
+  if (!db) {
+    return { ...activeModels };
+  }
+
   try {
-    const db = getFirestoreInstance();
-    if (!db) {
-      addLog('WARN', 'ADMIN', 'Firestore indisponível na inicialização, usando armazenamento local.');
-      return;
-    }
-
-    // 1. Sync AI Models config
-    const modelsDocRef = db.collection('config').doc('ai_models');
-    const modelsDocSnap = await modelsDocRef.get();
-
-    if (modelsDocSnap.exists) {
-      const remoteModels = modelsDocSnap.data() as AIModelsConfig;
+    const docSnap = await db.collection('config').doc('ai_models').get();
+    if (docSnap.exists) {
+      const remote = docSnap.data() as AIModelsConfig;
       activeModels = {
         ...activeModels,
-        ...remoteModels,
-        checklistParams: { ...activeModels.checklistParams, ...(remoteModels.checklistParams || {}) },
-        proposalParams: { ...activeModels.proposalParams, ...(remoteModels.proposalParams || {}) },
-        preAtaParams: { ...activeModels.preAtaParams, ...(remoteModels.preAtaParams || {}) },
-        finalAtaParams: { ...activeModels.finalAtaParams, ...(remoteModels.finalAtaParams || {}) },
-        chatbotParams: { ...activeModels.chatbotParams, ...(remoteModels.chatbotParams || {}) },
+        ...remote,
+        checklistParams: { ...activeModels.checklistParams, ...(remote.checklistParams || {}) },
+        proposalParams: { ...activeModels.proposalParams, ...(remote.proposalParams || {}) },
+        preAtaParams: { ...activeModels.preAtaParams, ...(remote.preAtaParams || {}) },
+        finalAtaParams: { ...activeModels.finalAtaParams, ...(remote.finalAtaParams || {}) },
+        chatbotParams: { ...activeModels.chatbotParams, ...(remote.chatbotParams || {}) },
       };
-      addLog('INFO', 'ADMIN', 'Configurações de Modelos de IA e Hiperparâmetros hidratados do Firestore com sucesso.');
+      lastModelsSyncTime = Date.now();
+      persistLocalDiskCacheSilently(activeModels, activePrompts);
     } else {
-      // First persistence seed to Firestore
-      await modelsDocRef.set({
+      // Criação inicial se não existir
+      await db.collection('config').doc('ai_models').set({
         ...activeModels,
         updatedAt: new Date().toISOString(),
       });
-      addLog('INFO', 'ADMIN', 'Primeira persistência de Modelos de IA (65k Tokens / 32k Raciocínio) gravada no Firestore com sucesso.');
+      lastModelsSyncTime = Date.now();
     }
+  } catch (err: any) {
+    console.warn('Aviso ao sincronizar ai_models do Firestore:', err.message);
+  }
 
-    // 2. Sync Custom Prompts config
-    const promptsDocRef = db.collection('config').doc('custom_prompts');
-    const promptsDocSnap = await promptsDocRef.get();
+  return { ...activeModels };
+}
 
-    if (promptsDocSnap.exists) {
-      const remotePrompts = promptsDocSnap.data() as CustomPromptsConfig;
-      activePrompts = { ...activePrompts, ...remotePrompts };
-      addLog('INFO', 'ADMIN', 'Instruções de Prompts customizados hidratadas do Firestore com sucesso.');
+/**
+ * Sincroniza Prompts do Firestore com validação de TTL de 60 segundos.
+ */
+export async function syncPromptsFromFirestore(force: boolean = false): Promise<CustomPromptsConfig> {
+  const now = Date.now();
+  if (!force && (now - lastPromptsSyncTime < CACHE_TTL_MS)) {
+    return { ...activePrompts };
+  }
+
+  const db = getFirestoreInstance();
+  if (!db) {
+    return { ...activePrompts };
+  }
+
+  try {
+    const docSnap = await db.collection('config').doc('custom_prompts').get();
+    if (docSnap.exists) {
+      const remote = docSnap.data() as CustomPromptsConfig;
+      activePrompts = { ...activePrompts, ...remote };
+      lastPromptsSyncTime = Date.now();
+      persistLocalDiskCacheSilently(activeModels, activePrompts);
     } else {
-      // First persistence seed to Firestore
-      await promptsDocRef.set({
+      await db.collection('config').doc('custom_prompts').set({
         ...activePrompts,
         updatedAt: new Date().toISOString(),
       });
-      addLog('INFO', 'ADMIN', 'Primeira persistência de Prompts customizados gravada no Firestore com sucesso.');
+      lastPromptsSyncTime = Date.now();
     }
-
-    // Persist to local fallback cache
-    persistAdminConfigsLocally(activeModels, activePrompts);
-
   } catch (err: any) {
-    addLog('WARN', 'ADMIN', `Erro ao sincronizar configurações de administração no Firestore: ${err.message}`);
+    console.warn('Aviso ao sincronizar custom_prompts do Firestore:', err.message);
+  }
+
+  return { ...activePrompts };
+}
+
+/**
+ * Inicialização no boot do servidor.
+ */
+export async function initializeAdminConfigFromFirestore(): Promise<void> {
+  try {
+    await Promise.all([
+      syncModelsFromFirestore(true),
+      syncPromptsFromFirestore(true)
+    ]);
+    addLog('INFO', 'ADMIN', 'Configurações de Modelos e Prompts sincronizadas do Firestore com sucesso (TTL 60s ativado).');
+  } catch (err: any) {
+    addLog('WARN', 'ADMIN', `Aviso na sincronização inicial do Firestore: ${err.message}`);
   }
 }
 
 export function getActiveModels(): AIModelsConfig {
+  // Dispara refresh em background se TTL expirou
+  if (Date.now() - lastModelsSyncTime > CACHE_TTL_MS) {
+    syncModelsFromFirestore(false).catch(() => {});
+  }
   return { ...activeModels };
 }
 export const getStoredModelsConfig = getActiveModels;
 
-export function updateActiveModels(models: Partial<AIModelsConfig>): AIModelsConfig {
-  // Sync individual model names and parameter sub-objects
+export async function updateActiveModels(models: Partial<AIModelsConfig>): Promise<AIModelsConfig> {
   const updated = { ...activeModels, ...models };
 
   if (models.checklistParams) {
@@ -351,96 +324,62 @@ export function updateActiveModels(models: Partial<AIModelsConfig>): AIModelsCon
   }
 
   activeModels = updated;
-  
-  // Persist both locally and to Firestore
-  persistAdminConfigsLocally(activeModels, activePrompts);
-  saveModelsToFirestore(activeModels);
+  lastModelsSyncTime = Date.now();
 
-  addLog('INFO', 'ADMIN', 'Configurações e hiperparâmetros de Modelos de IA atualizados e salvos no Firestore', activeModels);
+  // Firestore é a fonte primária de verdade
+  const db = getFirestoreInstance();
+  if (db) {
+    await db.collection('config').doc('ai_models').set({
+      ...activeModels,
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+  }
+
+  persistLocalDiskCacheSilently(activeModels, activePrompts);
+  addLog('INFO', 'ADMIN', 'Modelos de IA e hiperparâmetros atualizados no Firestore', activeModels);
   return { ...activeModels };
 }
 
 export function getActivePrompts(): CustomPromptsConfig {
+  if (Date.now() - lastPromptsSyncTime > CACHE_TTL_MS) {
+    syncPromptsFromFirestore(false).catch(() => {});
+  }
   return { ...activePrompts };
 }
 export const getStoredPrompts = getActivePrompts;
 
-export function updateActivePrompts(prompts: Partial<CustomPromptsConfig>): CustomPromptsConfig {
+export async function updateActivePrompts(prompts: Partial<CustomPromptsConfig>): Promise<CustomPromptsConfig> {
   activePrompts = { ...activePrompts, ...prompts };
-  
-  // Persist both locally and to Firestore
-  persistAdminConfigsLocally(activeModels, activePrompts);
-  savePromptsToFirestore(activePrompts);
+  lastPromptsSyncTime = Date.now();
 
-  addLog('INFO', 'ADMIN', 'Instruções de Prompt personalizadas atualizadas e salvas no Firestore', activePrompts);
+  const db = getFirestoreInstance();
+  if (db) {
+    await db.collection('config').doc('custom_prompts').set({
+      ...activePrompts,
+      updatedAt: new Date().toISOString(),
+    }, { merge: true });
+  }
+
+  persistLocalDiskCacheSilently(activeModels, activePrompts);
+  addLog('INFO', 'ADMIN', 'Instruções de prompts customizados atualizadas no Firestore', activePrompts);
   return { ...activePrompts };
 }
 
-export function getTemplateVersions(): { 
-  versions: TemplateConfig[]; 
-  activeId: string; 
-  activeTemplate: TemplateConfig | null;
-  hasTemplate: boolean;
-} {
-  const active = templateVersions.find(t => t.id === activeTemplateId) || (templateVersions.length > 0 ? templateVersions[0] : null);
-  return {
-    versions: [...templateVersions].sort((a, b) => b.version - a.version),
-    activeId: active ? active.id : '',
-    activeTemplate: active,
-    hasTemplate: Boolean(active && active.docxBlobBase64)
-  };
+// Invalidação forçada de caches
+export function invalidateConfigCaches() {
+  lastModelsSyncTime = 0;
+  lastPromptsSyncTime = 0;
 }
+
+// Template active helper for meetingStore
+let cachedActiveTemplate: TemplateConfig | null = null;
+let lastTemplateSyncTime = 0;
 
 export function getActiveTemplate(): TemplateConfig | null {
-  const active = templateVersions.find(t => t.id === activeTemplateId);
-  if (active) return active;
-  if (templateVersions.length > 0) return templateVersions[0];
-  return null;
+  return cachedActiveTemplate;
 }
 
-export function createNewTemplateVersion(template: Omit<TemplateConfig, 'id' | 'version' | 'createdAt'>): TemplateConfig {
-  const currentMaxVersion = templateVersions.length > 0 
-    ? Math.max(...templateVersions.map(t => t.version), 0)
-    : 0;
-  const newVersion = currentMaxVersion + 1;
-  const newId = `template-v${newVersion}-${Date.now().toString(36)}`;
-
-  const newEntry: TemplateConfig = {
-    ...template,
-    id: newId,
-    version: newVersion,
-    createdAt: new Date().toISOString()
-  };
-
-  templateVersions.unshift(newEntry);
-  if (templateVersions.length > 10) {
-    templateVersions = templateVersions.slice(0, 10);
-  }
-  activeTemplateId = newId;
-
-  // Persist to database file
-  persistTemplates(templateVersions, activeTemplateId);
-
-  addLog('INFO', 'ADMIN', `Nova versão de template DOCX salva e ativada no banco de dados: v${newVersion} - ${newEntry.name}`, {
-    templateId: newId,
-    version: newVersion,
-    fileName: newEntry.originalFileName,
-    fileSizeBytes: newEntry.fileSizeBytes
-  });
-
-  return newEntry;
-}
-
-export function rollbackTemplate(targetId: string): TemplateConfig {
-  const target = templateVersions.find(t => t.id === targetId);
-  if (!target) {
-    throw new Error(`Template com ID ${targetId} não encontrado no banco de dados de templates.`);
-  }
-  activeTemplateId = target.id;
-  persistTemplates(templateVersions, activeTemplateId);
-  addLog('WARN', 'ADMIN', `Rollback de template DOCX realizado para a versão v${target.version} - ${target.name}`, {
-    targetId,
-    version: target.version
-  });
-  return target;
+export function setActiveTemplateCache(template: TemplateConfig | null) {
+  cachedActiveTemplate = template;
+  lastTemplateSyncTime = Date.now();
 }

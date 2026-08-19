@@ -46,6 +46,22 @@
         "updatedAt": { "type": "string" }
       }
     },
+    "AtaState": {
+      "title": "AtaState",
+      "description": "Instantâneo versionado de estado da Ata com rastreabilidade de modelo, prompt e template",
+      "type": "object",
+      "properties": {
+        "versao": { "type": "number" },
+        "promptVersion": { "type": "string" },
+        "modelo": { "type": "string" },
+        "templateVersion": { "type": "number" },
+        "savedAt": { "type": "string" },
+        "savedBy": { "type": "object" },
+        "status": { "type": "string" },
+        "state": { "type": "object" }
+      },
+      "required": ["versao", "promptVersion", "modelo", "templateVersion", "savedAt", "status", "state"]
+    },
     "TemplateVersion": {
       "title": "TemplateVersion",
       "description": "Versões de template DOCX com schema e chunks para geração determinística de atas",
@@ -103,6 +119,10 @@
     "/meetings/{meetingId}": {
       "schema": "Meeting",
       "description": "Coleção de atas e reuniões salvas no histórico com controle de proprietário"
+    },
+    "/meetings/{meetingId}/ataState/{versao}": {
+      "schema": "AtaState",
+      "description": "Subcoleção com snapshots versionados de estado e auditoria da ata"
     },
     "/templates/{templateId}": {
       "schema": "TemplateVersion",

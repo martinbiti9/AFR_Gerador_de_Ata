@@ -8,7 +8,7 @@ import {
   signOut,
   sendPasswordResetEmail,
 } from 'firebase/auth';
-import { doc, getDoc, setDoc, serverTimestamp } from 'firebase/firestore';
+import { doc, getDoc } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
 import { UserProfile } from '../types';
 import { safeFetchJson, MustChangePasswordError } from '../utils/api';
@@ -60,12 +60,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   };
 
   /**
-   * Synchronizes user profile with Backend API and Firestore directly
+   * Synchronizes user profile with Backend API and Firestore
    */
   const fetchSession = useCallback(async (currentUser: FirebaseUser): Promise<UserProfile> => {
     const fallbackProfile = buildClientProfile(currentUser);
 
-    // 1. Try Firestore direct read/write with client SDK
+    // 1. Try Firestore direct read with client SDK
     try {
       const userDocRef = doc(db, 'users', currentUser.uid);
       const userSnap = await getDoc(userDocRef);
@@ -75,25 +75,12 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         fallbackProfile.role = fallbackProfile.email.endsWith('@biti9.com.br') ? 'admin' : (data.role || fallbackProfile.role);
         fallbackProfile.displayName = data.displayName || fallbackProfile.displayName;
         fallbackProfile.mustChangePassword = Boolean(data.mustChangePassword && fallbackProfile.role !== 'admin');
-      } else {
-        await setDoc(userDocRef, {
-          uid: fallbackProfile.uid,
-          email: fallbackProfile.email,
-          displayName: fallbackProfile.displayName,
-          role: fallbackProfile.role,
-          domain: fallbackProfile.domain,
-          provider: fallbackProfile.provider,
-          isActive: true,
-          mustChangePassword: false,
-          createdAt: serverTimestamp(),
-          lastLoginAt: serverTimestamp(),
-        }, { merge: true }).catch(() => {});
       }
     } catch (firestoreErr) {
-      console.warn('Aviso ao consultar Firestore diretamente no cliente:', firestoreErr);
+      console.warn('Aviso ao consultar Firestore no cliente:', firestoreErr);
     }
 
-    // 2. Try Backend session API
+    // 2. Try Backend session API (which persists user with Admin SDK if missing)
     try {
       const session = await safeFetchJson<UserProfile>('/api/auth/session');
       if (session) {

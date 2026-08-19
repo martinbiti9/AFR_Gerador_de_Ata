@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { TemplateDocument, TemplateSchema, TemplateField, TemplateLoop, TableInspection } from './types/template';
+import { TemplateDocument, TemplateSchema, TemplateField, TemplateLoop, TableInspection, TableInspectionRow } from './types/template';
 import { addLog } from './logger';
 import { initFirebaseAdmin } from './auth';
 
@@ -35,12 +35,141 @@ function ensureDataDir() {
 }
 
 /**
+ * Localiza a tabela de corpo principal de 4 colunas com cabeçalho "Item" e "Descrição / Deliberação".
+ * Nunca seleciona a tabela de cabeçalho (índice 0).
+ */
+export function encontrarTabelaCorpo(tables: TableInspection[]): TableInspection | null {
+  if (!tables || tables.length === 0) return null;
+
+  const normalize = (s: string) =>
+    (s || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim();
+
+  // 1. Procurar tabela cujo cabeçalho (row 0) tenha 4 colunas e células 0 e 1 iniciando com "item" e "descri"
+  for (const tbl of tables) {
+    if (tbl.columnCount === 4 && tbl.rows && tbl.rows.length >= 2) {
+      const headerCells = tbl.rows[0]?.cells || [];
+      const cell0 = normalize(headerCells[0]);
+      const cell1 = normalize(headerCells[1]);
+      if (cell0.startsWith('item') && cell1.startsWith('descri')) {
+        return tbl;
+      }
+    }
+  }
+
+  // 2. Fallback: tabela de 4 colunas com MAIOR rowCount (e rowCount >= 3). NUNCA a tabela 0 por posição.
+  const candidatas4Col = tables
+    .filter(t => t.index !== 0 && t.columnCount === 4 && t.rowCount >= 3)
+    .sort((a, b) => b.rowCount - a.rowCount);
+
+  if (candidatas4Col.length > 0) {
+    return candidatas4Col[0];
+  }
+
+  // 3. Fallback adicional: qualquer tabela (exceto índice 0) com 4 colunas e ao menos 2 linhas
+  const fallback4Col = tables
+    .filter(t => t.index !== 0 && t.columnCount === 4 && t.rowCount >= 2)
+    .sort((a, b) => b.rowCount - a.rowCount);
+
+  return fallback4Col[0] || null;
+}
+
+/**
+ * Localiza a tabela de participantes (4 ou 6 colunas cujo cabeçalho contenha "participante").
+ */
+export function encontrarTabelaParticipantes(tables: TableInspection[]): TableInspection | null {
+  if (!tables || tables.length === 0) return null;
+
+  const normalize = (s: string) =>
+    (s || '')
+      .normalize('NFD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .trim();
+
+  // 1. Procurar tabela cujo cabeçalho (row 0) contenha a palavra "participante" (exceto tabela 0)
+  for (const tbl of tables) {
+    if (tbl.index !== 0 && tbl.rows && tbl.rows.length >= 2) {
+      const headerCells = tbl.rows[0]?.cells || [];
+      const hasPart = headerCells.some(c => normalize(c).includes('participante'));
+      if (hasPart) {
+        return tbl;
+      }
+    }
+  }
+
+  // 2. Fallback: qualquer tabela com 6 colunas
+  const sixCol = tables.find(t => t.columnCount === 6 && t.rowCount >= 2);
+  return sixCol || null;
+}
+
+/**
+ * Estrutura para os textos padrão extraídos das linhas do template.
+ */
+export interface TextoPadraoTemplate {
+  num: string;
+  titulo?: string;
+  descricao: string;
+  responsavel?: string;
+  prazo?: string;
+}
+
+/**
+ * Lê as linhas da tabela de corpo do template e extrai os textos padrão
+ * convertendo quaisquer resíduos ([xx], R$ XXXX, XXX) para '[A DEFINIR NA REUNIÃO]'.
+ */
+export function extrairTextosPadraoDoTemplate(tabelaCorpo: TableInspection | { rows?: TableInspectionRow[] } | null): TextoPadraoTemplate[] {
+  if (!tabelaCorpo || !tabelaCorpo.rows || tabelaCorpo.rows.length <= 1) {
+    return [];
+  }
+
+  const limparResiduos = (txt: string) =>
+    (txt || '')
+      .replace(/\[x+\]|R\$\s*X+|\bX{3,}\b/gi, '[A DEFINIR NA REUNIÃO]')
+      .trim();
+
+  const resultados: TextoPadraoTemplate[] = [];
+
+  // Pula a linha 0 (cabeçalho)
+  for (let i = 1; i < tabelaCorpo.rows.length; i++) {
+    const row = tabelaCorpo.rows[i];
+    const cells = row.cells || [];
+    const num = (cells[0] || String(i).padStart(2, '0')).trim();
+    const descricaoCrua = cells[1] || '';
+    const responsavel = cells[2] ? limparResiduos(cells[2]) : undefined;
+    const prazo = cells[3] ? limparResiduos(cells[3]) : undefined;
+
+    const descricao = limparResiduos(descricaoCrua);
+    if (!descricao && !num) continue;
+
+    // Se a primeira linha da descrição contiver um título em destaque antes de quebra de linha
+    const linhas = descricao.split('\n');
+    const primeiroParagrafo = linhas[0]?.trim() || '';
+    const titulo = primeiroParagrafo.length < 80 ? primeiroParagrafo : undefined;
+
+    resultados.push({
+      num,
+      titulo,
+      descricao,
+      responsavel,
+      prazo
+    });
+  }
+
+  return resultados;
+}
+
+/**
  * Creates a default standard TemplateSchema when a template is uploaded.
  */
 export function buildDefaultSchema(
   templateId: string,
   placeholders: string[] = [],
-  tables: TableInspection[] = []
+  tables: TableInspection[] = [],
+  bulletNumId: number | null = null
 ): TemplateSchema {
   const standardFields: TemplateField[] = [
     { name: 'obraCodigo', path: 'abertura.obraCodigo', type: 'string', required: true, description: 'Código identificador da obra' },
@@ -58,35 +187,20 @@ export function buildDefaultSchema(
     { name: 'resumo', path: 'finalAta.notes', type: 'string', required: false, description: 'Resumo executivo ou notas gerais' },
   ];
 
-  // Identify main body table (usually table with 4 columns and largest row count or table 4)
-  let mainTableIndex = 0;
-  let mainProtoRow = 1;
-  let hasMainTable = false;
+  const bodyTable = encontrarTabelaCorpo(tables);
+  const partTable = encontrarTabelaParticipantes(tables);
 
-  if (tables && tables.length > 0) {
-    // Find table with 4 columns (Item | Descrição/Corpo | Responsável | Prazo)
-    const fourColTbl = tables.find(t => t.columnCount === 4 && t.rowCount >= 2);
-    if (fourColTbl) {
-      mainTableIndex = fourColTbl.index;
-      mainProtoRow = 1;
-      hasMainTable = true;
-    } else {
-      // Find largest table
-      const largestTbl = [...tables].sort((a, b) => b.rowCount - a.rowCount)[0];
-      if (largestTbl) {
-        mainTableIndex = largestTbl.index;
-        mainProtoRow = Math.min(1, largestTbl.rowCount - 1);
-        hasMainTable = true;
-      }
-    }
-  }
+  const standardLoops: TemplateLoop[] = [];
 
-  const standardLoops: TemplateLoop[] = [
-    {
+  // Loop 1: Corpo da Ata ('itens')
+  if (bodyTable) {
+    standardLoops.push({
       tag: 'itens',
       description: 'Tabela principal de deliberações, itens acordados e pendências da reunião',
-      tableIndex: hasMainTable ? mainTableIndex : 0,
-      prototypeRowIndex: mainProtoRow,
+      tableIndex: bodyTable.index,
+      prototypeRowIndex: 1,
+      basePPr: bodyTable.basePPr,
+      baseRPr: bodyTable.baseRPr,
       columns: [
         { cellIndex: 0, key: 'num', label: 'Item / Número' },
         { cellIndex: 1, key: '@corpoXml', label: 'Conteúdo Formatado OOXML' },
@@ -103,71 +217,59 @@ export function buildDefaultSchema(
         { name: 'responsavel', path: 'item.responsavel', type: 'string', required: false, description: 'Responsável' },
         { name: 'prazo', path: 'item.prazo', type: 'string', required: false, description: 'Prazo limite' }
       ]
-    },
-    {
-      tag: 'topics',
-      description: 'Tabela ou lista de tópicos da Análise de Aderência do Checklist',
-      tableIndex: hasMainTable ? mainTableIndex : 0,
-      prototypeRowIndex: mainProtoRow,
-      columns: [
-        { cellIndex: 0, key: 'num', label: 'Item / Número' },
-        { cellIndex: 1, key: '@corpoXml', label: 'Conteúdo Formatado' },
-        { cellIndex: 2, key: 'responsavel', label: 'Responsável' },
-        { cellIndex: 3, key: 'prazo', label: 'Prazo' }
-      ],
-      removeOtherRows: true,
-      allowEmpty: true,
-      itemFields: [
-        { name: 'num', path: 'item.num', type: 'string', required: false, description: 'Número sequencial' },
-        { name: 'title', path: 'item.title', type: 'string', required: true, description: 'Título da regra' },
-        { name: 'regraObra', path: 'item.regraObra', type: 'string', required: false, description: 'Regra técnica da obra' },
-        { name: 'excecaoAdmitida', path: 'item.excecaoAdmitida', type: 'string', required: false, description: 'Exceção admitida' },
-        { name: 'pontoAtencao', path: 'item.pontoAtencao', type: 'string', required: false, description: 'Ponto de atenção destacado', renderOptions: { highlightColor: 'red' } },
-        { name: 'perguntaFornecedor', path: 'item.perguntaFornecedor', type: 'string', required: false, description: 'Pergunta ou alinhamento para a reunião' },
-        { name: 'source', path: 'item.source', type: 'string', required: false, description: 'Origem da regra no documento' },
-      ]
-    },
-    {
-      tag: 'agreedItems',
-      description: 'Lista de itens aprovados e acordados na reunião de negociação',
-      tableIndex: hasMainTable ? mainTableIndex : 0,
-      prototypeRowIndex: mainProtoRow,
-      columns: [
-        { cellIndex: 0, key: 'num', label: 'Item' },
-        { cellIndex: 1, key: '@corpoXml', label: 'Descrição Acordada' },
-        { cellIndex: 2, key: 'responsavel', label: 'Responsável' },
-        { cellIndex: 3, key: 'prazo', label: 'Prazo' }
-      ],
-      removeOtherRows: true,
-      allowEmpty: true,
-      itemFields: [
-        { name: 'num', path: 'item.num', type: 'string', required: false, description: 'Número sequencial' },
-        { name: 'text', path: 'item.text', type: 'string', required: true, description: 'Descrição do acordo ou deliberação' },
-        { name: 'responsavel', path: 'item.responsavel', type: 'string', required: false, description: 'Responsável pelo item' },
-        { name: 'prazo', path: 'item.prazo', type: 'string', required: false, description: 'Prazo limite acordado' },
-      ]
-    },
-    {
-      tag: 'pendingItems',
-      description: 'Lista de pendências remanescentes com destaque em vermelho',
-      tableIndex: hasMainTable ? mainTableIndex : 0,
-      prototypeRowIndex: mainProtoRow,
-      columns: [
-        { cellIndex: 0, key: 'num', label: 'Item' },
-        { cellIndex: 1, key: '@corpoXml', label: 'Pendência' },
-        { cellIndex: 2, key: 'responsavel', label: 'Responsável' },
-        { cellIndex: 3, key: 'prazo', label: 'Prazo' }
-      ],
-      removeOtherRows: true,
-      allowEmpty: true,
-      itemFields: [
-        { name: 'num', path: 'item.num', type: 'string', required: false, description: 'Número sequencial' },
-        { name: 'text', path: 'item.text', type: 'string', required: true, description: 'Descrição da pendência', renderOptions: { highlightColor: 'red' } },
-        { name: 'responsavel', path: 'item.responsavel', type: 'string', required: false, description: 'Responsável pela pendência' },
-        { name: 'prazo', path: 'item.prazo', type: 'string', required: false, description: 'Prazo de conclusão' },
-      ]
+    });
+  }
+
+  // Loop 2: Participantes ('participantesPares' para 6 colunas ou 'participantes' para 4 colunas)
+  if (partTable) {
+    if (partTable.columnCount === 6) {
+      standardLoops.push({
+        tag: 'participantesPares',
+        description: 'Lista de presença com participantes dispostos em pares de colunas (6 colunas)',
+        tableIndex: partTable.index,
+        prototypeRowIndex: 1,
+        columns: [
+          { cellIndex: 0, key: 'p1Nome', label: 'Participante 1 - Nome' },
+          { cellIndex: 1, key: 'p1EmpresaEmail', label: 'Participante 1 - Empresa / E-mail' },
+          { cellIndex: 2, key: 'p1Visto', label: 'Participante 1 - Visto' },
+          { cellIndex: 3, key: 'p2Nome', label: 'Participante 2 - Nome' },
+          { cellIndex: 4, key: 'p2EmpresaEmail', label: 'Participante 2 - Empresa / E-mail' },
+          { cellIndex: 5, key: 'p2Visto', label: 'Participante 2 - Visto' }
+        ],
+        removeOtherRows: true,
+        allowEmpty: true,
+        itemFields: [
+          { name: 'p1Nome', path: 'item.p1Nome', type: 'string', required: false, description: 'Nome do primeiro participante' },
+          { name: 'p1EmpresaEmail', path: 'item.p1EmpresaEmail', type: 'string', required: false, description: 'Empresa e email do primeiro participante' },
+          { name: 'p1Visto', path: 'item.p1Visto', type: 'string', required: false, description: 'Visto do primeiro participante' },
+          { name: 'p2Nome', path: 'item.p2Nome', type: 'string', required: false, description: 'Nome do segundo participante' },
+          { name: 'p2EmpresaEmail', path: 'item.p2EmpresaEmail', type: 'string', required: false, description: 'Empresa e email do segundo participante' },
+          { name: 'p2Visto', path: 'item.p2Visto', type: 'string', required: false, description: 'Visto do segundo participante' }
+        ]
+      });
+    } else {
+      standardLoops.push({
+        tag: 'participantes',
+        description: 'Lista de presença dos participantes da reunião',
+        tableIndex: partTable.index,
+        prototypeRowIndex: 1,
+        columns: [
+          { cellIndex: 0, key: 'nome', label: 'Participante / Nome' },
+          { cellIndex: 1, key: 'cargoDepto', label: 'Empresa / Depto' },
+          { cellIndex: 2, key: 'email', label: 'E-mail' },
+          { cellIndex: 3, key: 'visto', label: 'Visto' }
+        ],
+        removeOtherRows: true,
+        allowEmpty: true,
+        itemFields: [
+          { name: 'nome', path: 'item.nome', type: 'string', required: false, description: 'Nome do participante' },
+          { name: 'cargoDepto', path: 'item.cargoDepto', type: 'string', required: false, description: 'Empresa / Departamento' },
+          { name: 'email', path: 'item.email', type: 'string', required: false, description: 'E-mail de contato' },
+          { name: 'visto', path: 'item.visto', type: 'string', required: false, description: 'Visto ou assinatura' }
+        ]
+      });
     }
-  ];
+  }
 
   // Add any extra detected placeholders as optional string fields if not already present
   for (const tag of placeholders) {
@@ -219,6 +321,7 @@ export function buildDefaultSchema(
     loops: standardLoops,
     placeholderMap: defaultPlaceholderMap,
     removerRealceAmarelo: true,
+    bulletNumId: bulletNumId ?? null,
     createdAt: now,
     updatedAt: now,
     generatedBy: 'system'
@@ -269,17 +372,41 @@ async function fetchDocxBlobFromFirestore(db: any, templateId: string, docData: 
 }
 
 async function withTimeout<T>(promise: Promise<T>, timeoutMs: number = 10000): Promise<T> {
+  let isSettled = false;
+  const safePromise = promise.catch(err => {
+    if (!isSettled) throw err;
+    return undefined as any;
+  }).then(res => {
+    isSettled = true;
+    return res;
+  });
+
   return Promise.race([
-    promise,
-    new Promise<T>((_, reject) => setTimeout(() => reject(new Error('Firestore timeout')), timeoutMs))
+    safePromise,
+    new Promise<T>((_, reject) => setTimeout(() => { isSettled = true; reject(new Error('Firestore timeout')); }, timeoutMs))
   ]);
 }
 
+// Process cache with 60s TTL for active template
+let cachedActiveTemplateDoc: TemplateDocument | null = null;
+let lastActiveTemplateFetch = 0;
+const TEMPLATE_CACHE_TTL_MS = 60 * 1000;
+
+export function invalidateActiveTemplateCache() {
+  cachedActiveTemplateDoc = null;
+  lastActiveTemplateFetch = 0;
+}
+
 /**
- * Reads the active template directly from Firestore on every call.
+ * Reads the active template from Firestore with 60s process cache and auto-invalidation.
  * Falls back to disk only if Firestore is unavailable.
  */
-export async function getActiveTemplateFromDb(): Promise<TemplateDocument | null> {
+export async function getActiveTemplateFromDb(forceRefresh: boolean = false): Promise<TemplateDocument | null> {
+  const now = Date.now();
+  if (!forceRefresh && cachedActiveTemplateDoc && (now - lastActiveTemplateFetch < TEMPLATE_CACHE_TTL_MS)) {
+    return cachedActiveTemplateDoc;
+  }
+
   const db = getFirestoreInstance();
 
   if (db) {
@@ -293,12 +420,14 @@ export async function getActiveTemplateFromDb(): Promise<TemplateDocument | null
         if (templateDoc.exists) {
           const rawData = templateDoc.data() as any;
           const fullBase64 = await fetchDocxBlobFromFirestore(db, templateDoc.id, rawData);
-          return {
+          cachedActiveTemplateDoc = {
             ...rawData,
             id: templateDoc.id,
             docxBlobBase64: fullBase64,
             schema: rawData.schema || buildDefaultSchema(templateDoc.id, rawData.detectedPlaceholders, rawData.tables)
           } as TemplateDocument;
+          lastActiveTemplateFetch = Date.now();
+          return cachedActiveTemplateDoc;
         }
       }
 
@@ -310,11 +439,13 @@ export async function getActiveTemplateFromDb(): Promise<TemplateDocument | null
         const active = foundDocs.find(d => d.isActive === true) || foundDocs[0];
         if (active) {
           const fullBase64 = await fetchDocxBlobFromFirestore(db, active.id, active);
-          return {
+          cachedActiveTemplateDoc = {
             ...active,
             docxBlobBase64: fullBase64,
             schema: active.schema || buildDefaultSchema(active.id, active.detectedPlaceholders, active.tables)
           } as TemplateDocument;
+          lastActiveTemplateFetch = Date.now();
+          return cachedActiveTemplateDoc;
         }
       }
     } catch (err: any) {
@@ -323,7 +454,9 @@ export async function getActiveTemplateFromDb(): Promise<TemplateDocument | null
   }
 
   // Disk fallback
-  return getActiveTemplateFromDisk();
+  cachedActiveTemplateDoc = getActiveTemplateFromDisk();
+  lastActiveTemplateFetch = Date.now();
+  return cachedActiveTemplateDoc;
 }
 
 /**
@@ -475,6 +608,7 @@ export async function saveTemplateDocumentToDb(
     docxBlobBase64: rawDocxBase64
   };
   saveToDisk(fullDocumentForDisk, newId);
+  invalidateActiveTemplateCache();
 
   return fullDocumentForDisk;
 }
@@ -501,6 +635,7 @@ export async function setActiveTemplateInDb(targetId: string): Promise<TemplateD
         });
 
         const fullBlob = await fetchDocxBlobFromFirestore(db, targetId, raw);
+        invalidateActiveTemplateCache();
 
         return {
           ...raw,
@@ -515,6 +650,7 @@ export async function setActiveTemplateInDb(targetId: string): Promise<TemplateD
   }
 
   // Disk fallback rollback
+  invalidateActiveTemplateCache();
   return rollbackDiskTemplate(targetId);
 }
 
@@ -546,6 +682,7 @@ export async function updateTemplateSchemaInDb(templateId: string, schema: Templ
 
   // Update in disk
   updateDiskSchema(templateId, updatedSchema);
+  invalidateActiveTemplateCache();
 
   return updatedSchema;
 }
@@ -554,6 +691,7 @@ export async function updateTemplateSchemaInDb(templateId: string, schema: Templ
  * Deletes a template from Firestore and disk storage.
  */
 export async function deleteTemplateFromDb(templateId: string): Promise<{ success: boolean; newActiveId: string; remainingCount: number }> {
+  invalidateActiveTemplateCache();
   const db = getFirestoreInstance();
   let remainingList: TemplateDocument[] = [];
   let newActiveId = '';

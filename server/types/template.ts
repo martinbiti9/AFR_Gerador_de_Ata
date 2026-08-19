@@ -48,6 +48,7 @@ export interface TemplateSchema {
   loops: TemplateLoop[];
   placeholderMap?: Record<string, string>;
   removerRealceAmarelo?: boolean;
+  bulletNumId?: number | null;
   createdAt: string;
   updatedAt: string;
   generatedBy: 'system' | 'ai' | 'admin';
@@ -76,6 +77,8 @@ export interface TableInspection {
   rowCount: number;
   columnCount: number;
   rows: TableInspectionRow[];
+  basePPr?: string;
+  baseRPr?: string;
 }
 
 export interface TemplateDocument {
@@ -110,7 +113,7 @@ export interface TemplateDocument {
 
 // ================= RICH TEXT BLOCKS =================
 
-export type Estilo = 'normal' | 'forte' | 'alerta' | 'ressalva';
+export type Estilo = 'normal' | 'forte' | 'alerta' | 'ressalva' | 'nota';
 
 export interface Run {
   t: string;
@@ -129,7 +132,7 @@ export const RunSchema = z.object({
   t: z.string().refine((val) => !/<[a-zA-Z]/.test(val), {
     message: 'Texto do run não pode conter tags HTML ou XML (< seguido de letra).'
   }),
-  estilo: z.enum(['normal', 'forte', 'alerta', 'ressalva']).optional().default('normal')
+  estilo: z.enum(['normal', 'forte', 'alerta', 'ressalva', 'nota']).optional().default('normal')
 });
 
 export const BlocoSchema = z.object({

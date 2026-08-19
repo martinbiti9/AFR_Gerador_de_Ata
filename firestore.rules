@@ -2,33 +2,48 @@ rules_version = '2';
 service cloud.firestore {
   match /databases/{database}/documents {
 
-    function signedIn()  { return request.auth != null; }
-    function isAdmin()   { 
-      return signedIn() && (
-        ('role' in request.auth.token && request.auth.token.role == 'admin') ||
-        ('email' in request.auth.token && (request.auth.token.email.matches('.*@biti9[.]com[.]br$') || request.auth.token.email == 'martin@biti9.com.br')) ||
-        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
-      );
+    function signedIn() {
+      return request.auth != null;
     }
-    function isOwner(r)  { return signedIn() && (r.ownerUid == request.auth.uid || !('ownerUid' in r)); }
 
+    function isAdmin() {
+      return signedIn() &&
+        exists(/databases/$(database)/documents/users/$(request.auth.uid)) &&
+        get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+
+    // Test connection endpoint for SDK health checks
+    match /test/{docId} {
+      allow read: if true;
+      allow write: if false;
+    }
+
+    // users/{uid}: Leitura apenas do próprio usuário
     match /users/{uid} {
-      allow read:   if signedIn();
-      allow write:  if signedIn();
+      allow read: if signedIn() && request.auth.uid == uid;
+      allow write: if false;
     }
 
-    match /meetings/{meetingId} {
-      allow read:   if signedIn();
-      allow create: if signedIn();
-      allow update: if signedIn();
-      allow delete: if signedIn();
+    // meetings/{id}: Isolamento por proprietário (ownerUid)
+    match /meetings/{id} {
+      allow read, update, delete: if signedIn() && (resource == null || resource.data.ownerUid == request.auth.uid);
+      allow create: if signedIn() && request.resource.data.ownerUid == request.auth.uid;
+
+      match /ataState/{versao} {
+        allow read, write: if false;
+      }
     }
 
-    match /templates/{id}                    { allow read, write: if signedIn(); }
-    match /templateBlobs/{id}/{doc=**}       { allow read, write: if signedIn(); }
-    match /config/{id}                       { allow read, write: if signedIn(); }
-    match /logs/{id}                         { allow read, write: if signedIn(); }
+    // Coleções administrativas e de infraestrutura: Acesso de cliente NEGADO (apenas backend via Admin SDK)
+    match /templates/{id}              { allow read, write: if false; }
+    match /templateBlobs/{id}/{doc=**} { allow read, write: if false; }
+    match /config/{id}                 { allow read, write: if false; }
+    match /logs/{id}                   { allow read, write: if false; }
 
-    match /{document=**} { allow read, write: if false; }
+    // Fallback de negação global
+    match /{document=**} {
+      allow read, write: if false;
+    }
   }
 }
+
