@@ -219,8 +219,18 @@ export const DivergenceItemSchema = z.object({
   source: z.string().default('Proposta')
 });
 
+export const ParticipanteItemSchema = z.object({
+  id: z.string().optional(),
+  nome: z.string().default(''),
+  cargoDepto: z.string().optional().default(''),
+  empresa: z.string().default(''),
+  email: z.string().optional().default(''),
+  visto: z.string().optional().default('')
+});
+
 export const FinalAtaItemSchema = z.object({
   num: z.string().optional(),
+  item: z.string().optional(),
   titulo: z.string().optional(),
   descricao: z.string().optional(),
   responsavel: z.string().optional(),
@@ -229,7 +239,9 @@ export const FinalAtaItemSchema = z.object({
 });
 
 export const FinalAtaValidationSchema = z.object({
+  participantes: z.array(ParticipanteItemSchema).optional().default([]),
   agreedItems: z.array(z.union([z.string(), FinalAtaItemSchema])).default([]),
   pendingItems: z.array(z.union([z.string(), FinalAtaItemSchema])).default([]),
-  notes: z.string().default('')
+  notes: z.string().default(''),
+  resumo: z.string().optional().default('')
 });

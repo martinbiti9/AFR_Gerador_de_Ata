@@ -14,6 +14,8 @@ import { LoginView } from './components/Auth/LoginView';
 import { ChangePasswordView } from './components/Auth/ChangePasswordView';
 import { AfonsoFrancaLogo } from './components/AfonsoFrancaLogo';
 import { AuthProvider, useAuth } from './contexts/AuthContext';
+import { AlertProvider } from './contexts/AlertContext';
+import { FooterErrorAlert } from './components/FooterErrorAlert';
 import { AppState, INITIAL_STATE, AberturaData } from './types';
 import { saveMeeting, loadMeeting } from './lib/db';
 import { CheckCircle2, Loader2, Save, Wand2, Shield, LogOut, User as UserIcon } from 'lucide-react';
@@ -327,18 +329,6 @@ function AppContent() {
           </div>
 
           <div className="flex items-center space-x-2">
-            {/* Templates Quick Button */}
-            {isAdmin && (
-              <button
-                onClick={() => handleOpenAdmin('templates')}
-                className="flex items-center gap-1.5 text-xs font-semibold bg-slate-100 hover:bg-blue-50 hover:text-blue-700 text-slate-700 px-3 py-1.5 rounded-lg transition-colors border border-slate-200 shadow-2xs cursor-pointer"
-                title="Gerenciar Templates DOCX salvos no banco de dados"
-              >
-                <Save size={13} className="text-blue-600" />
-                <span className="hidden sm:inline">Templates DOCX</span>
-              </button>
-            )}
-
             {/* Wizard Fast-Track Button in Header */}
             <button
               onClick={() => setIsWizardOpen(true)}
@@ -502,6 +492,7 @@ function AppContent() {
       )}
 
       <Chatbot />
+      <FooterErrorAlert />
     </div>
   );
 }
@@ -509,7 +500,9 @@ function AppContent() {
 export function App() {
   return (
     <AuthProvider>
-      <AppContent />
+      <AlertProvider>
+        <AppContent />
+      </AlertProvider>
     </AuthProvider>
   );
 }

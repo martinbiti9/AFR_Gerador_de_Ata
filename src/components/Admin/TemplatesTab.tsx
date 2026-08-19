@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import { SchemaEditorModal } from './SchemaEditorModal';
 import { safeFetchJson, safeFetchBlob } from '../../utils/api';
+import { emitCriticalDbError } from '../../contexts/AlertContext';
 
 interface Props {
   onRefreshLogs?: () => void;
@@ -109,6 +110,12 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
       setTimeout(() => setStatusMsg(''), 6000);
     } catch (err: any) {
       setErrorMsg(err.message || 'Erro ao criar template.');
+      emitCriticalDbError({
+        title: 'Erro Crítico ao Salvar Template no Banco',
+        message: 'Não foi possível fazer o upload e gravação do template DOCX no Firestore.',
+        details: err.message || err,
+        path: 'templates'
+      });
     } finally {
       setSavingNew(false);
     }
@@ -130,6 +137,12 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
       setTimeout(() => setStatusMsg(''), 4000);
     } catch (err: any) {
       setErrorMsg(err.message || 'Erro ao ativar versão.');
+      emitCriticalDbError({
+        title: 'Erro ao Alterar Template Ativo',
+        message: `Falha ao ativar o template v${versionNum} no Firestore.`,
+        details: err.message || err,
+        path: `templates/${targetId}`
+      });
     }
   };
 
@@ -151,6 +164,12 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
       setTimeout(() => setStatusMsg(''), 4000);
     } catch (err: any) {
       setErrorMsg(err.message || 'Erro ao excluir template.');
+      emitCriticalDbError({
+        title: 'Erro Crítico ao Excluir Template',
+        message: `Falha ao excluir o template v${versionNum} do banco de dados.`,
+        details: err.message || err,
+        path: `templates/${targetId}`
+      });
     } finally {
       setIsDeleting(false);
     }

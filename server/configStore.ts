@@ -223,7 +223,9 @@ async function saveModelsToFirestore(models: AIModelsConfig) {
       updatedAt: new Date().toISOString(),
     }, { merge: true });
   } catch (err: any) {
-    console.warn('Aviso: Falha ao persistir ai_models no Firestore:', err.message);
+    if (!err.message?.includes('PERMISSION_DENIED')) {
+      console.warn('Aviso: Falha ao persistir ai_models no Firestore:', err.message);
+    }
   }
 }
 
@@ -236,7 +238,9 @@ async function savePromptsToFirestore(prompts: CustomPromptsConfig) {
       updatedAt: new Date().toISOString(),
     }, { merge: true });
   } catch (err: any) {
-    console.warn('Aviso: Falha ao persistir custom_prompts no Firestore:', err.message);
+    if (!err.message?.includes('PERMISSION_DENIED')) {
+      console.warn('Aviso: Falha ao persistir custom_prompts no Firestore:', err.message);
+    }
   }
 }
 

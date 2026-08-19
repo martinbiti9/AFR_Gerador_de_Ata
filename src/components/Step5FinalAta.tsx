@@ -79,6 +79,88 @@ function plainTextToItems(text: string, defaultResp: string = 'Contratada'): Fin
   return lines.map((line, idx) => toItemObject(line, idx, defaultResp));
 }
 
+// Helper to build initial structured Ata Final data from Checklist + Divergences
+function buildInitialDraftData(state: AppState): FinalAtaData {
+  const fornecedorNome = state.abertura?.fornecedor || 'Contratada';
+  const obraIdentificacao = `${state.abertura?.obraCodigo || 'S/N'} - ${state.abertura?.obraNome || 'Obra'}`;
+  
+  const topics: any[] = Array.isArray(state.analysisResult)
+    ? state.analysisResult
+    : (Array.isArray(state.analysisResult?.topics) ? state.analysisResult.topics : []);
+  
+  const divergences: any[] = Array.isArray(state.divergences) ? state.divergences : [];
+
+  let agreedItems: FinalAtaItem[] = [];
+  if (topics.length > 0) {
+    agreedItems = topics.map((t: any, idx: number) => {
+      const numStr = String(idx + 1).padStart(2, '0');
+      const title = t.title || t.titulo || t.section || `Item ${idx + 1} do Check List`;
+      const reqList = Array.isArray(t.requirements) 
+        ? t.requirements.join('; ') 
+        : (t.requirements || t.description || t.descricao || 'Atendimento integral às especificações técnicas da obra.');
+      return {
+        num: numStr,
+        titulo: title,
+        descricao: `Fica acordado o atendimento integral ao item "${title}": ${reqList}`,
+        responsavel: fornecedorNome,
+        prazo: 'Conforme cronograma da obra'
+      };
+    });
+  } else {
+    agreedItems = [
+      {
+        num: '01',
+        titulo: 'Escopo Técnico e Conformidade dos Serviços',
+        descricao: `O fornecedor ${fornecedorNome} compromete-se a executar o pacote ${state.abertura?.servico || 'contratado'} em conformidade total com os projetos executivos e normas técnicas da Afonso França.`,
+        responsavel: fornecedorNome,
+        prazo: 'Durante toda a vigência da obra'
+      },
+      {
+        num: '02',
+        titulo: 'Segurança do Trabalho e Normas Regulamentadoras',
+        descricao: 'Fornecimento diário de EPIs com CA válido e cumprimento rigoroso das NRs (NR-06, NR-18 e NR-35) e integração prévia de equipe.',
+        responsavel: fornecedorNome,
+        prazo: 'Imediato e contínuo'
+      },
+      {
+        num: '03',
+        titulo: 'Critérios de Medição e Pagamento',
+        descricao: 'Medições mensais avaliando exclusivamente serviços 100% executados e aprovados pela fiscalização da Afonso França Engenharia.',
+        responsavel: 'Afonso França / Fornecedor',
+        prazo: 'Mensal (até dia 25)'
+      }
+    ];
+  }
+
+  let pendingItems: FinalAtaItem[] = [];
+  if (divergences.length > 0) {
+    pendingItems = divergences.map((d: any, idx: number) => {
+      const numStr = String(idx + 1).padStart(2, '0');
+      const desc = d.description || d.descricao || d.divergencia || `Pendência ${idx + 1}`;
+      const sev = d.severity || d.severidade || 'MEDIA';
+      return {
+        num: numStr,
+        titulo: `Ajuste de Divergência [Severidade ${sev}]`,
+        descricao: `Regularizar item apontado na proposta comercial: ${desc}`,
+        responsavel: fornecedorNome,
+        prazo: sev === 'ALTA' ? 'Em até 48 horas' : 'Em até 5 dias úteis'
+      };
+    });
+  }
+
+  const topicSummary = topics.length > 0 
+    ? `Foram validados e deliberados ${topics.length} tópicos técnicos e operacionais do Check List de Suprimentos da Obra.` 
+    : 'Foram alinhadas as premissas técnicas, operacionais e de segurança do trabalho.';
+
+  const divSummary = divergences.length > 0
+    ? `Foram registradas ${divergences.length} pendências/divergências comerciais para envio de retificação pelo fornecedor.`
+    : 'As condições comerciais e tributárias foram alinhadas em conformidade com as diretrizes da construtora.';
+
+  const notes = `Reunião de alinhamento e deliberações finais realizada para a contratação da Obra ${obraIdentificacao} com o fornecedor ${fornecedorNome}, referente ao pacote ${state.abertura?.servico || 'de engenharia'} (RM: ${state.abertura?.rm || 'S/N'} • Cotação: ${state.abertura?.cot || 'S/N'}).\n\n${topicSummary} ${divSummary}\n\nFica acordado que todos os itens deliberados integram o instrumento contratual, com início das mobilizações condicionado à entrega dos documentos de SST e regularidade cadastral exigidos pela Afonso França Engenharia.`;
+
+  return { agreedItems, pendingItems, notes };
+}
+
 export function Step5FinalAta({ state, updateState, onMetadataDetected, onNavigateToTemplates }: Props) {
   const [transcript, setTranscript] = useState(state.finalAtaText || '');
   const [isTextareaExpanded, setIsTextareaExpanded] = useState(false);
@@ -93,7 +175,12 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
   const [isWarningModalOpen, setIsWarningModalOpen] = useState(false);
 
   // Local state for the editable draft and accordion collapse
-  const [draftData, setDraftData] = useState<FinalAtaData | null>(state.finalAtaData || null);
+  const [draftData, setDraftData] = useState<FinalAtaData | null>(() => {
+    if (state.finalAtaData && (state.finalAtaData.agreedItems?.length > 0 || state.finalAtaData.pendingItems?.length > 0 || state.finalAtaData.notes)) {
+      return state.finalAtaData;
+    }
+    return buildInitialDraftData(state);
+  });
   const [isDraftExpanded, setIsDraftExpanded] = useState(true);
   const [editMode, setEditMode] = useState<'cards' | 'raw'>('cards');
   const [isValidatingModalOpen, setIsValidatingModalOpen] = useState(false);
@@ -114,6 +201,15 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
     checkTemplateStatus();
   }, []);
 
+  // Ensure initial draftData is populated in parent state if empty
+  useEffect(() => {
+    if (!state.finalAtaData || (!state.finalAtaData.agreedItems?.length && !state.finalAtaData.pendingItems?.length && !state.finalAtaData.notes)) {
+      const initial = buildInitialDraftData(state);
+      setDraftData(initial);
+      updateState({ finalAtaData: initial });
+    }
+  }, []);
+
   // Synchronize internal state whenever state from parent changes
   useEffect(() => {
     if (state.finalAtaText !== undefined && state.finalAtaText !== transcript) {
@@ -122,8 +218,10 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
   }, [state.finalAtaText]);
 
   useEffect(() => {
-    if (state.finalAtaData !== undefined) {
-      setDraftData(state.finalAtaData || null);
+    if (state.finalAtaData !== undefined && state.finalAtaData !== null) {
+      if (state.finalAtaData.agreedItems?.length > 0 || state.finalAtaData.pendingItems?.length > 0 || state.finalAtaData.notes) {
+        setDraftData(state.finalAtaData);
+      }
     }
   }, [state.finalAtaData]);
 
@@ -175,11 +273,6 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
   };
 
   const draftFinalAta = async () => {
-    if (!transcript.trim()) {
-      setError('Por favor, insira a transcrição ou anotações da reunião.');
-      return;
-    }
-
     setLoadingDraft(true);
     setError('');
     
@@ -191,13 +284,25 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
           abertura: state.abertura,
           analysisResult: state.analysisResult,
           divergences: state.divergences,
-          transcript
+          transcript: transcript || 'Reunião de alinhamento realizada com validação do Check List e deliberações comerciais.'
         })
       });
       
       setDraftData(data);
       setIsDraftExpanded(true);
-      updateState({ finalAtaData: data, finalAtaText: transcript });
+      
+      if (data?.participantes && data.participantes.length > 0 && state.abertura) {
+        updateState({ 
+          finalAtaData: data, 
+          finalAtaText: transcript,
+          abertura: {
+            ...state.abertura,
+            participantes: data.participantes
+          }
+        });
+      } else {
+        updateState({ finalAtaData: data, finalAtaText: transcript });
+      }
     } catch (err: any) {
       setError(err.message || 'Erro ao rascunhar Ata Final');
     } finally {
@@ -221,16 +326,16 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
 
   const handleSaveAndGenerateValidation = async (updated: {
     abertura: AberturaData | null;
-    finalAtaData: FinalAtaData;
+    finalData: FinalAtaData;
   }) => {
     setLoadingDocx(true);
     setError('');
 
     try {
-      setDraftData(updated.finalAtaData);
+      setDraftData(updated.finalData);
       updateState({
         abertura: updated.abertura,
-        finalAtaData: updated.finalAtaData
+        finalAtaData: updated.finalData
       });
 
       const blob = await safeFetchBlob('/api/generate-final-ata', {
@@ -241,7 +346,7 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
           analysisResult: state.analysisResult,
           divergences: state.divergences,
           transcript,
-          finalAtaData: updated.finalAtaData
+          finalAtaData: updated.finalData
         })
       });
 
@@ -254,7 +359,7 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
       a.remove();
       window.URL.revokeObjectURL(url);
 
-      updateState({ finalAtaGenerated: true, finalAtaData: updated.finalAtaData });
+      updateState({ finalAtaGenerated: true, finalAtaData: updated.finalData });
       setIsValidatingModalOpen(false);
     } catch (err: any) {
       const errMsg = err.message || 'Erro ao gerar Ata Final';
@@ -756,26 +861,29 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
                 Transcrição pronta ({transcript.length.toLocaleString('pt-BR')} caracteres)
               </span>
             ) : (
-              <span className="text-slate-400">Anexe ou digite a transcrição para habilitar a análise</span>
+              <span className="text-slate-600 font-medium flex items-center gap-1.5">
+                <CheckCircle2 size={15} className="text-blue-600" />
+                Deliberações e pendências consolidadas a partir do Check List e Proposta
+              </span>
             )}
           </div>
 
           <button
             type="button"
             onClick={draftFinalAta}
-            disabled={loadingDraft || !transcript.trim()}
-            className="flex items-center justify-center gap-2 px-6 py-2.5 text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 rounded-lg uppercase tracking-tight shadow-md hover:shadow-lg disabled:bg-slate-300 disabled:text-slate-500 disabled:shadow-none transition-all ml-auto"
-            title="Analisa a transcrição integrando o contexto do Checklist, Propostas e Divergências no padrão do template"
+            disabled={loadingDraft}
+            className="flex items-center justify-center gap-2 px-6 py-2.5 text-xs font-bold text-white bg-slate-900 hover:bg-slate-800 rounded-lg uppercase tracking-tight shadow-md hover:shadow-lg disabled:bg-slate-300 disabled:text-slate-500 disabled:shadow-none transition-all ml-auto cursor-pointer"
+            title="Consolida a Ata Final cruzando o Check List da Obra, Divergências da Proposta e Transcrição"
           >
             {loadingDraft ? (
               <>
                 <Loader2 size={16} className="animate-spin text-white" />
-                Analisando Transcrição e Contextos...
+                Sintetizando Deliberações com IA...
               </>
             ) : (
               <>
                 <Sparkles size={16} className="text-blue-300" />
-                {draftData ? 'Reanalisar Transcrição' : 'Analisar Transcrição'}
+                {transcript.trim() ? 'Sintetizar com IA (Checklist + Transcrição)' : 'Sintetizar Deliberações com IA'}
               </>
             )}
           </button>
@@ -823,7 +931,7 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
           isOpen={isValidatingModalOpen}
           onClose={() => setIsValidatingModalOpen(false)}
           abertura={state.abertura}
-          draftData={draftData}
+          finalData={draftData}
           activeTemplateName={activeTemplateName}
           onSaveAndGenerate={handleSaveAndGenerateValidation}
           loading={loadingDocx}

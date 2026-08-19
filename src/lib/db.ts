@@ -2,6 +2,7 @@ import { collection, doc, setDoc, getDoc, getDocs, deleteDoc, serverTimestamp, q
 import { db, auth } from './firebase';
 import { AppState, AuditLog } from '../types';
 import { safeFetchJson } from '../utils/api';
+import { emitCriticalDbError } from '../contexts/AlertContext';
 
 export enum OperationType {
   CREATE = 'create',
@@ -117,10 +118,21 @@ export const saveMeeting = async (state: AppState): Promise<string> => {
   const cleanFirestorePayload = sanitizeForFirestore(payload);
 
   // 1. Primary: Save to Firestore directly
+  let firestoreFailed = false;
   try {
     await setDoc(meetingRef, cleanFirestorePayload, { merge: true });
-  } catch (firestoreError) {
+  } catch (firestoreError: any) {
+    firestoreFailed = true;
     console.warn("Aviso ao salvar diretamente no Firestore:", firestoreError);
+    if (firestoreError?.message?.includes('PERMISSION_DENIED') || firestoreError?.code === 'permission-denied') {
+      emitCriticalDbError({
+        title: 'Permissão Insuficiente no Firestore',
+        message: 'Não foi possível gravar a reunião no Firestore devido a regras de permissão (PERMISSION_DENIED).',
+        details: firestoreError.message || firestoreError,
+        path: `meetings/${meetingId}`,
+        retryAction: () => setDoc(meetingRef, cleanFirestorePayload, { merge: true })
+      });
+    }
   }
 
   // 2. Secondary: Sync with Backend Storage API
@@ -133,8 +145,16 @@ export const saveMeeting = async (state: AppState): Promise<string> => {
         createdAt: new Date().toISOString(),
       }),
     });
-  } catch (apiError) {
+  } catch (apiError: any) {
     console.warn("Aviso ao sincronizar reunião com API de backend:", apiError);
+    if (firestoreFailed) {
+      emitCriticalDbError({
+        title: 'Falha Crítica ao Persistir Reunião',
+        message: 'A reunião não pôde ser gravada no Firestore nem sincronizada com o backend.',
+        details: apiError.message || apiError,
+        path: `meetings/${meetingId}`
+      });
+    }
   }
 
   // 3. Record Audit Log in Firestore

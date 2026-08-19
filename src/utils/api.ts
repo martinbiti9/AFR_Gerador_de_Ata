@@ -122,14 +122,45 @@ export async function safeFetchJson<T = any>(
     try {
       data = JSON.parse(rawText);
     } catch {
-      // Not valid JSON (e.g. HTML <!doctype ...> from Vite/Express error page)
-      if (!res.ok) {
-        if (rawText.includes('<!DOCTYPE') || rawText.includes('<html') || rawText.includes('Cannot POST') || rawText.includes('Cannot GET')) {
-          throw new Error(`Erro no servidor (${res.status}): O servidor retornou uma página de erro HTML. Tente novamente.`);
+      // Try extract JSON from markdown fences or substring if present
+      let parsedSuccessfully = false;
+      const codeBlockMatch = rawText.match(/```(?:json)?\s*([\s\S]*?)\s*```/i);
+      const textToTry = codeBlockMatch ? codeBlockMatch[1].trim() : rawText.trim();
+
+      const firstBrace = textToTry.indexOf('{');
+      const lastBrace = textToTry.lastIndexOf('}');
+      const firstBracket = textToTry.indexOf('[');
+      const lastBracket = textToTry.lastIndexOf(']');
+
+      const candidates: string[] = [textToTry];
+      if (firstBrace !== -1 && lastBrace > firstBrace) candidates.push(textToTry.substring(firstBrace, lastBrace + 1));
+      if (firstBracket !== -1 && lastBracket > firstBracket) candidates.push(textToTry.substring(firstBracket, lastBracket + 1));
+
+      for (const cand of candidates) {
+        try {
+          data = JSON.parse(cand);
+          parsedSuccessfully = true;
+          break;
+        } catch {
+          try {
+            // Remove trailing commas and comments
+            const sanitized = cand.replace(/\/\/.*$/gm, '').replace(/,\s*([\}\]])/g, '$1');
+            data = JSON.parse(sanitized);
+            parsedSuccessfully = true;
+            break;
+          } catch {}
         }
-        throw new Error(`Erro (${res.status}): ${rawText.slice(0, 180)}`);
       }
-      throw new Error('A resposta do servidor não é um formato JSON válido.');
+
+      if (!parsedSuccessfully) {
+        if (!res.ok) {
+          if (rawText.includes('<!DOCTYPE') || rawText.includes('<html') || rawText.includes('Cannot POST') || rawText.includes('Cannot GET')) {
+            throw new Error(`Erro no servidor (${res.status}): O servidor retornou uma página de erro HTML. Tente novamente.`);
+          }
+          throw new Error(`Erro (${res.status}): ${rawText.slice(0, 180)}`);
+        }
+        throw new Error(`Erro ao interpretar resposta do servidor: Formato de dados não reconhecido.`);
+      }
     }
   }
 

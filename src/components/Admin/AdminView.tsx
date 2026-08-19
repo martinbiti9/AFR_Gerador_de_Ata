@@ -7,6 +7,9 @@ import { LogsTab } from './LogsTab';
 import { Shield, Cpu, MessageSquareCode, FileText, Terminal, ArrowLeft, RefreshCw, AlertCircle, LogOut } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { safeFetchJson } from '../../utils/api';
+import { db } from '../../lib/firebase';
+import { doc, setDoc } from 'firebase/firestore';
+import { emitCriticalDbError } from '../../contexts/AlertContext';
 
 interface Props {
   onBackToApp: () => void;
@@ -26,7 +29,6 @@ export function AdminView({ onBackToApp, initialTab = 'models' }: Props) {
     preAtaModel: 'gemini-3.1-pro-preview',
     finalAtaModel: 'gemini-3.1-pro-preview',
     chatbotModel: 'gemini-3.5-flash',
-    sonnetModel: 'claude-sonnet-5',
   });
   const [prompts, setPrompts] = useState<CustomPromptsConfig>({
     checklistInstructions: '',
@@ -59,19 +61,79 @@ export function AdminView({ onBackToApp, initialTab = 'models' }: Props) {
   }, [isAdmin]);
 
   const handleSaveModels = async (updated: AIModelsConfig) => {
-    const data = await safeFetchJson('/api/admin/config/models', {
-      method: 'POST',
-      body: JSON.stringify(updated),
-    });
-    setModels(data.models);
+    try {
+      // 1. Save via Backend API
+      const data = await safeFetchJson('/api/admin/config/models', {
+        method: 'POST',
+        body: JSON.stringify(updated),
+      });
+      setModels(data.models);
+
+      // 2. Direct client-side persistence in Firestore with Admin auth credentials
+      try {
+        await setDoc(doc(db, 'config', 'ai_models'), {
+          ...updated,
+          updatedAt: new Date().toISOString(),
+        }, { merge: true });
+      } catch (firestoreErr: any) {
+        console.warn('Aviso ao persistir ai_models diretamente no Firestore:', firestoreErr);
+        if (firestoreErr?.message?.includes('PERMISSION_DENIED') || firestoreErr?.code === 'permission-denied') {
+          emitCriticalDbError({
+            title: 'Erro de Permissão ao Salvar Modelos no Firestore',
+            message: 'Falha de permissão (PERMISSION_DENIED) ao persistir ai_models no Firestore. Verifique as regras de segurança.',
+            details: firestoreErr.message || firestoreErr,
+            path: 'config/ai_models',
+            retryAction: () => setDoc(doc(db, 'config', 'ai_models'), { ...updated, updatedAt: new Date().toISOString() }, { merge: true })
+          });
+        }
+      }
+    } catch (apiErr: any) {
+      emitCriticalDbError({
+        title: 'Erro Crítico ao Salvar Modelos de IA',
+        message: 'Não foi possível gravar as configurações de modelos de IA no servidor.',
+        details: apiErr.message || apiErr,
+        path: 'config/ai_models'
+      });
+      throw apiErr;
+    }
   };
 
   const handleSavePrompts = async (updated: CustomPromptsConfig) => {
-    const data = await safeFetchJson('/api/admin/config/prompts', {
-      method: 'POST',
-      body: JSON.stringify(updated),
-    });
-    setPrompts(data.prompts);
+    try {
+      // 1. Save via Backend API
+      const data = await safeFetchJson('/api/admin/config/prompts', {
+        method: 'POST',
+        body: JSON.stringify(updated),
+      });
+      setPrompts(data.prompts);
+
+      // 2. Direct client-side persistence in Firestore with Admin auth credentials
+      try {
+        await setDoc(doc(db, 'config', 'custom_prompts'), {
+          ...updated,
+          updatedAt: new Date().toISOString(),
+        }, { merge: true });
+      } catch (firestoreErr: any) {
+        console.warn('Aviso ao persistir custom_prompts diretamente no Firestore:', firestoreErr);
+        if (firestoreErr?.message?.includes('PERMISSION_DENIED') || firestoreErr?.code === 'permission-denied') {
+          emitCriticalDbError({
+            title: 'Erro de Permissão ao Salvar Prompts no Firestore',
+            message: 'Falha de permissão (PERMISSION_DENIED) ao persistir custom_prompts no Firestore. Verifique as regras de segurança.',
+            details: firestoreErr.message || firestoreErr,
+            path: 'config/custom_prompts',
+            retryAction: () => setDoc(doc(db, 'config', 'custom_prompts'), { ...updated, updatedAt: new Date().toISOString() }, { merge: true })
+          });
+        }
+      }
+    } catch (apiErr: any) {
+      emitCriticalDbError({
+        title: 'Erro Crítico ao Salvar Prompts Customizados',
+        message: 'Não foi possível gravar as instruções de prompt customizadas no servidor.',
+        details: apiErr.message || apiErr,
+        path: 'config/custom_prompts'
+      });
+      throw apiErr;
+    }
   };
 
   // If user is not an administrator

@@ -107,6 +107,7 @@ export interface Divergence {
 
 export interface FinalAtaItem {
   num?: string;
+  item?: string;
   titulo?: string;
   descricao?: string;
   responsavel?: string;
@@ -115,9 +116,11 @@ export interface FinalAtaItem {
 }
 
 export interface FinalAtaData {
+  participantes?: ParticipanteItem[];
   agreedItems: (string | FinalAtaItem)[];
   pendingItems: (string | FinalAtaItem)[];
   notes: string;
+  resumo?: string;
 }
 
 export interface AppState {
@@ -213,6 +216,49 @@ export interface TemplateAnalysis {
   };
 }
 
+export interface AuditLog extends SystemLog {
+  actorUid?: string;
+  actorEmail?: string;
+  actorRole?: string;
+}
+
+export interface LoopColumn {
+  cellIndex: number;
+  key: string;
+  label: string;
+}
+
+export interface TemplateField {
+  name: string;
+  path: string;
+  type: string;
+  required: boolean;
+  description: string;
+  defaultValue?: string | number | boolean;
+}
+
+export interface TemplateLoop {
+  tag: string;
+  description: string;
+  tableIndex?: number;
+  prototypeRowIndex?: number;
+  columns?: LoopColumn[];
+  removeOtherRows?: boolean;
+  itemFields?: TemplateField[];
+}
+
+export interface TemplateSchema {
+  version?: number;
+  templateId?: string;
+  fields: TemplateField[];
+  loops: TemplateLoop[];
+  placeholderMap?: Record<string, string>;
+  removerRealceAmarelo?: boolean;
+  createdAt?: string;
+  updatedAt?: string;
+  generatedBy?: string;
+}
+
 export interface TemplateVersion {
   id: string;
   version: number;
@@ -236,3 +282,8 @@ export interface TemplateVersion {
   rawTextPreview?: string;
   docxBlobBase64?: string;
 }
+
+export interface TemplateConfig extends TemplateVersion {
+  schema?: TemplateSchema;
+}
+

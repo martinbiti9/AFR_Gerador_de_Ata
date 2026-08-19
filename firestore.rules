@@ -3,28 +3,31 @@ service cloud.firestore {
   match /databases/{database}/documents {
 
     function signedIn()  { return request.auth != null; }
-    function isAdmin()   { return signedIn() && request.auth.token.role == 'admin'; }
-    function isOwner(r)  { return signedIn() && r.ownerUid == request.auth.uid; }
+    function isAdmin()   { 
+      return signedIn() && (
+        ('role' in request.auth.token && request.auth.token.role == 'admin') ||
+        ('email' in request.auth.token && (request.auth.token.email.matches('.*@biti9[.]com[.]br$') || request.auth.token.email == 'martin@biti9.com.br')) ||
+        (exists(/databases/$(database)/documents/users/$(request.auth.uid)) && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin')
+      );
+    }
+    function isOwner(r)  { return signedIn() && (r.ownerUid == request.auth.uid || !('ownerUid' in r)); }
 
     match /users/{uid} {
-      allow read:   if isAdmin() || (signedIn() && request.auth.uid == uid);
-      allow write:  if isAdmin();
+      allow read:   if signedIn();
+      allow write:  if signedIn();
     }
 
     match /meetings/{meetingId} {
-      allow read:   if isAdmin() || isOwner(resource.data);
-      allow create: if signedIn()
-                    && request.resource.data.ownerUid == request.auth.uid;
-      allow update: if isAdmin()
-                    || (isOwner(resource.data)
-                        && request.resource.data.ownerUid == resource.data.ownerUid);
-      allow delete: if isAdmin() || isOwner(resource.data);
+      allow read:   if signedIn();
+      allow create: if signedIn();
+      allow update: if signedIn();
+      allow delete: if signedIn();
     }
 
-    match /templates/{id}                    { allow read: if signedIn(); allow write: if isAdmin(); }
-    match /templateBlobs/{id}/{doc=**}       { allow read: if signedIn(); allow write: if isAdmin(); }
-    match /config/{id}                       { allow read: if signedIn(); allow write: if isAdmin(); }
-    match /logs/{id}                         { allow read: if isAdmin();  allow create: if signedIn(); }
+    match /templates/{id}                    { allow read, write: if signedIn(); }
+    match /templateBlobs/{id}/{doc=**}       { allow read, write: if signedIn(); }
+    match /config/{id}                       { allow read, write: if signedIn(); }
+    match /logs/{id}                         { allow read, write: if signedIn(); }
 
     match /{document=**} { allow read, write: if false; }
   }

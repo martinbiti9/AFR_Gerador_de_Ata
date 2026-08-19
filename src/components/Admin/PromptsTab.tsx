@@ -101,25 +101,23 @@ export function PromptsTab({ prompts, onSave }: Props) {
           />
         </div>
 
-        {/* Diretrizes da Ata Final */}
+        {/* Diretrizes da Ata Final - Protegido / Hardcoded */}
         <div className="p-5 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
           <div className="flex items-center justify-between">
             <label className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
-              <span className="w-2 h-2 rounded-full bg-green-600"></span>
-              Instruções de Auditoria para a Ata Final (Etapa 5)
+              <span className="w-2 h-2 rounded-full bg-emerald-600"></span>
+              Geração da Ata Final (Etapa 5) - Motor Oficial Hardcoded
             </label>
-            <span className="text-[10px] bg-green-100 text-green-800 px-2 py-0.5 rounded font-bold">Ata Final • Template DOCX</span>
+            <span className="text-[10px] bg-emerald-100 text-emerald-800 px-2 py-0.5 rounded font-bold">Hardcoded • Protegido</span>
           </div>
           <p className="text-xs text-slate-500">
-            Critérios para validação dos itens acordados e pendentes extraídos da transcrição, prazos de envio de ART e aprovações de diretoria. Alimenta diretamente as seções <code className="text-emerald-700 font-mono font-semibold">{'{agreedItems}'}</code>, <code className="text-emerald-700 font-mono font-semibold">{'{pendingItems}'}</code> e <code className="text-emerald-700 font-mono font-semibold">{'{actionPoints}'}</code> do template DOCX.
+            A extração e consolidação dos <strong className="text-slate-700">Itens Acordados / Deliberações</strong>, <strong className="text-slate-700">Pendências e Prazos</strong> e <strong className="text-slate-700">Resumo Executivo</strong> a partir do Check List e das Divergências são executadas pelo motor técnico padronizado (hardcoded) para garantir a integridade dos contratos e conformidade com o template DOCX oficial.
           </p>
-          <textarea
-            value={formData.finalAtaInstructions}
-            onChange={(e) => handleChange('finalAtaInstructions', e.target.value)}
-            rows={4}
-            className="w-full bg-white border border-slate-300 rounded-lg p-3 text-xs text-slate-800 font-mono focus:ring-2 focus:ring-blue-500 focus:outline-none leading-relaxed resize-y"
-            placeholder="Ex: Todo item de medição deve citar a data limite do dia 25 de cada mês..."
-          />
+          <div className="p-3 bg-white border border-slate-200 rounded-lg text-xs text-slate-600 font-mono leading-relaxed">
+            ✓ Consolidação mandatória de 100% dos tópicos do Check List como Deliberações Conclusivas.<br />
+            ✓ Mapeamento automático de divergências comerciais e documentações em Pendências com Prazos e Responsáveis.<br />
+            ✓ Síntese executiva densa com valores, escopo, regras de medição e premissas operacionais.
+          </div>
         </div>
 
         {/* Diretrizes de Checklist / Aderência */}

@@ -17,7 +17,8 @@ function getFirestoreInstance() {
 const TEMPLATES_COLLECTION = 'templates';
 const SYSTEM_CONFIG_COLLECTION = 'config';
 const ACTIVE_TEMPLATE_DOC = 'activeTemplate';
-const CHUNK_SIZE = 600 * 1024; // 600 KB per chunk to stay well under 1MB Firestore limit
+const CHUNKS_SUBCOLLECTION = 'chunks';
+const CHUNK_SIZE = 350 * 1024; // 350 KB per chunk document (well under Firestore's 1MB doc limit)
 
 // Local fallback file path
 const DATA_DIR = path.resolve(process.cwd(), 'server', 'data');
@@ -237,20 +238,37 @@ function chunkBase64(base64Str: string): string[] {
   return chunks;
 }
 
-/**
- * Reassembles chunked base64 strings into a single string.
- */
-function reassembleChunks(docData: any): string | undefined {
+async function fetchDocxBlobFromFirestore(db: any, templateId: string, docData: any): Promise<string | undefined> {
+  // 1. Direct base64 if small and stored inline
   if (docData.docxBlobBase64) {
     return docData.docxBlobBase64;
   }
+  
+  // 2. Fetch from chunks subcollection (supports any file size)
+  try {
+    const chunksSnap = await db.collection(TEMPLATES_COLLECTION)
+      .doc(templateId)
+      .collection(CHUNKS_SUBCOLLECTION)
+      .orderBy('index', 'asc')
+      .get();
+      
+    if (!chunksSnap.empty) {
+      const parts = chunksSnap.docs.map((d: any) => d.data().data || '');
+      return parts.join('');
+    }
+  } catch (err: any) {
+    console.warn(`Erro ao ler chunks do template ${templateId} no Firestore:`, err.message);
+  }
+
+  // 3. Fallback for legacy blobChunks array
   if (Array.isArray(docData.blobChunks) && docData.blobChunks.length > 0) {
     return docData.blobChunks.join('');
   }
+
   return undefined;
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number = 2000): Promise<T> {
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number = 10000): Promise<T> {
   return Promise.race([
     promise,
     new Promise<T>((_, reject) => setTimeout(() => reject(new Error('Firestore timeout')), timeoutMs))
@@ -267,14 +285,14 @@ export async function getActiveTemplateFromDb(): Promise<TemplateDocument | null
   if (db) {
     try {
       // 1. Check pointer document config/activeTemplate
-      const configDoc = await withTimeout(db.collection(SYSTEM_CONFIG_COLLECTION).doc(ACTIVE_TEMPLATE_DOC).get(), 2000);
+      const configDoc = await withTimeout(db.collection(SYSTEM_CONFIG_COLLECTION).doc(ACTIVE_TEMPLATE_DOC).get(), 10000);
       let activeId = configDoc.exists ? (configDoc.data()?.templateId as string) : null;
 
       if (activeId) {
-        const templateDoc = await withTimeout(db.collection(TEMPLATES_COLLECTION).doc(activeId).get(), 2000);
+        const templateDoc = await withTimeout(db.collection(TEMPLATES_COLLECTION).doc(activeId).get(), 10000);
         if (templateDoc.exists) {
           const rawData = templateDoc.data() as any;
-          const fullBase64 = reassembleChunks(rawData);
+          const fullBase64 = await fetchDocxBlobFromFirestore(db, templateDoc.id, rawData);
           return {
             ...rawData,
             id: templateDoc.id,
@@ -285,13 +303,13 @@ export async function getActiveTemplateFromDb(): Promise<TemplateDocument | null
       }
 
       // 2. Query collection templates for isActive == true or highest version
-      const snap = await withTimeout(db.collection(TEMPLATES_COLLECTION).get(), 2000);
+      const snap = await withTimeout(db.collection(TEMPLATES_COLLECTION).get(), 10000);
       if (!snap.empty) {
         let foundDocs = snap.docs.map(d => ({ id: d.id, ...d.data() } as any));
         foundDocs.sort((a, b) => (b.version || 0) - (a.version || 0));
         const active = foundDocs.find(d => d.isActive === true) || foundDocs[0];
         if (active) {
-          const fullBase64 = reassembleChunks(active);
+          const fullBase64 = await fetchDocxBlobFromFirestore(db, active.id, active);
           return {
             ...active,
             docxBlobBase64: fullBase64,
@@ -326,15 +344,16 @@ export async function getAllTemplateVersionsFromDb(): Promise<{
       const configActiveId = configDoc.exists ? (configDoc.data()?.templateId as string) : '';
 
       if (!snap.empty) {
-        const list: TemplateDocument[] = snap.docs.map(d => {
+        const list: TemplateDocument[] = await Promise.all(snap.docs.map(async d => {
           const raw = d.data() as any;
+          const fullBlob = await fetchDocxBlobFromFirestore(db, d.id, raw);
           return {
             ...raw,
             id: d.id,
-            docxBlobBase64: reassembleChunks(raw),
+            docxBlobBase64: fullBlob,
             schema: raw.schema || buildDefaultSchema(d.id, raw.detectedPlaceholders, raw.tables)
           };
-        });
+        }));
 
         list.sort((a, b) => b.version - a.version);
         const active = list.find(v => v.id === configActiveId) || list.find(v => v.isActive) || list[0];
@@ -367,7 +386,8 @@ export const getTemplateVersionsFromDb = getAllTemplateVersionsFromDb;
 export const rollbackTemplateInDb = setActiveTemplateInDb;
 
 /**
- * Saves a new template document in Firestore with automated chunking for payloads > 600KB.
+ * Saves a new template document in Firestore with automated chunking in subcollections.
+ * Supports any file size safely and permanently in Firestore.
  */
 export async function saveTemplateDocumentToDb(
   data: Omit<TemplateDocument, 'id' | 'version' | 'createdAt' | 'updatedAt' | 'isActive'>
@@ -383,51 +403,76 @@ export async function saveTemplateDocumentToDb(
 
   const generatedSchema = data.schema || buildDefaultSchema(newId, data.detectedPlaceholders, data.tables);
 
-  let docxBlobBase64 = data.docxBlobBase64;
-  let blobChunks: string[] | undefined;
+  const rawDocxBase64 = data.docxBlobBase64 || '';
+  const chunks = rawDocxBase64 ? chunkBase64(rawDocxBase64) : [];
 
-  if (docxBlobBase64 && docxBlobBase64.length > CHUNK_SIZE) {
-    blobChunks = chunkBase64(docxBlobBase64);
-    docxBlobBase64 = undefined; // Avoid storing duplicate giant string
-  }
-
-  const newDoc: TemplateDocument = {
-    ...data,
+  const metadataDoc: any = {
+    name: data.name,
+    description: data.description || '',
+    companyName: data.companyName || 'DEPARTAMENTO DE SUPRIMENTOS',
+    primaryColor: data.primaryColor || '1F3864',
+    tableHeaderBg: data.tableHeaderBg || 'EEEEEE',
+    fontFamily: data.fontFamily || 'Arial',
+    preAtaIntro: data.preAtaIntro || '',
+    standardClauses: data.standardClauses || '',
+    signatures: data.signatures || '',
+    originalFileName: data.originalFileName,
+    fileSizeBytes: data.fileSizeBytes,
+    detectedPlaceholders: data.detectedPlaceholders,
+    structureSummary: data.structureSummary,
+    tables: data.tables,
+    rawTextPreview: data.rawTextPreview,
     id: newId,
     version: newVersion,
     schema: generatedSchema,
     createdAt: now,
     updatedAt: now,
     isActive: true,
-    docxBlobBase64,
-    blobChunks,
-    companyName: data.companyName || 'DEPARTAMENTO DE SUPRIMENTOS'
+    totalChunks: chunks.length,
+    hasChunks: chunks.length > 0
   };
 
-  // 1. Save to Firestore
+  // 1. Save to Firestore (Root metadata doc + Chunks subcollection)
   if (db) {
     try {
-      await db.collection(TEMPLATES_COLLECTION).doc(newId).set(newDoc);
+      // Save root metadata doc (tiny, ~10KB)
+      await db.collection(TEMPLATES_COLLECTION).doc(newId).set(metadataDoc);
+
+      // Save binary chunks in subcollection (each chunk ~350KB, well under 1MB limit)
+      if (chunks.length > 0) {
+        const batch = db.batch();
+        for (let i = 0; i < chunks.length; i++) {
+          const chunkRef = db.collection(TEMPLATES_COLLECTION).doc(newId).collection(CHUNKS_SUBCOLLECTION).doc(`chunk_${String(i).padStart(3, '0')}`);
+          batch.set(chunkRef, {
+            index: i,
+            totalChunks: chunks.length,
+            data: chunks[i],
+            createdAt: now
+          });
+        }
+        await batch.commit();
+      }
 
       // Set as active template pointer in config
       await db.collection(SYSTEM_CONFIG_COLLECTION).doc(ACTIVE_TEMPLATE_DOC).set({ templateId: newId, updatedAt: now });
 
-      addLog('INFO', 'ADMIN', `Novo Template salvo com sucesso no Firestore: v${newVersion} (${newDoc.name})`, {
+      addLog('INFO', 'ADMIN', `Novo Template salvo com sucesso e persistido no Firestore: v${newVersion} (${metadataDoc.name})`, {
         templateId: newId,
         version: newVersion,
-        fileName: newDoc.originalFileName,
-        fileSizeBytes: newDoc.fileSizeBytes,
-        hasSchema: Boolean(newDoc.schema)
+        fileName: metadataDoc.originalFileName,
+        fileSizeBytes: metadataDoc.fileSizeBytes,
+        chunksCount: chunks.length,
+        hasSchema: Boolean(metadataDoc.schema)
       });
     } catch (err: any) {
-      console.warn('Erro ao salvar template no Firestore:', err.message);
+      console.error('Erro ao salvar template no Firestore:', err);
     }
   }
 
   // 2. Also persist to local disk fallback
   const fullDocumentForDisk: TemplateDocument = {
-    ...newDoc,
-    docxBlobBase64: data.docxBlobBase64
+    ...metadataDoc,
+    docxBlobBase64: rawDocxBase64
   };
   saveToDisk(fullDocumentForDisk, newId);
 
@@ -455,10 +500,12 @@ export async function setActiveTemplateInDb(targetId: string): Promise<TemplateD
           version: raw.version
         });
 
+        const fullBlob = await fetchDocxBlobFromFirestore(db, targetId, raw);
+
         return {
           ...raw,
           id: targetId,
-          docxBlobBase64: reassembleChunks(raw),
+          docxBlobBase64: fullBlob,
           schema: raw.schema || buildDefaultSchema(targetId, raw.detectedPlaceholders, raw.tables)
         };
       }
@@ -513,14 +560,22 @@ export async function deleteTemplateFromDb(templateId: string): Promise<{ succes
 
   if (db) {
     try {
-      // 1. Delete template document
+      // 1. Delete chunks subcollection
+      const chunksSnap = await db.collection(TEMPLATES_COLLECTION).doc(templateId).collection(CHUNKS_SUBCOLLECTION).get();
+      if (!chunksSnap.empty) {
+        const batch = db.batch();
+        chunksSnap.docs.forEach((doc: any) => batch.delete(doc.ref));
+        await batch.commit();
+      }
+
+      // 2. Delete template document
       await db.collection(TEMPLATES_COLLECTION).doc(templateId).delete();
       
-      // 2. Fetch remaining templates
+      // 3. Fetch remaining templates
       const remainingSnap = await db.collection(TEMPLATES_COLLECTION).orderBy('version', 'desc').get();
       remainingList = remainingSnap.docs.map(d => ({ id: d.id, ...d.data() } as TemplateDocument));
 
-      // 3. Check active template reference
+      // 4. Check active template reference
       const activeDoc = await db.collection(SYSTEM_CONFIG_COLLECTION).doc(ACTIVE_TEMPLATE_DOC).get();
       const currentActiveId = activeDoc.exists ? (activeDoc.data()?.templateId || activeDoc.data()?.activeId) : '';
 
