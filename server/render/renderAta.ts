@@ -75,7 +75,31 @@ export function aplicarPlaceholderMap(xml: string, mapa: Record<string, string>)
  */
 export function aplicarPlaceholderMapEmTextos(xml: string, mapa: Record<string, string>): string {
   if (!xml) return xml;
-  const entries = mapa ? Object.entries(mapa).filter(([k, v]) => Boolean(k && v)) : [];
+  const defaultMappings: Record<string, string> = {
+    '[CÓDIGO DA OBRA]': 'obraCodigo',
+    '[CODIGO DA OBRA]': 'obraCodigo',
+    '[CÓDIGO_DA_OBRA]': 'obraCodigo',
+    '[CODIGO_DA_OBRA]': 'obraCodigo',
+    '[NOME DA OBRA]': 'obraNome',
+    '[NOME_DA_OBRA]': 'obraNome',
+    '[FORNECEDOR]': 'fornecedor',
+    '[ASSUNTO]': 'assunto',
+    '[SERVIÇO]': 'servico',
+    '[SERVICO]': 'servico',
+    '[EXTRAIR DO FIRE FLIES]': 'resumo',
+    '[EXTRAIR_DO_FIRE_FLIES]': 'resumo',
+    '[caminho da rede]': 'linkReuniao',
+    '[CAMINHO DA REDE]': 'linkReuniao',
+    '[caminho_da_rede]': 'linkReuniao',
+    '[CAMINHO_DA_REDE]': 'linkReuniao',
+    '<<obraCodigo>>': 'obraCodigo',
+    '<<fornecedor>>': 'fornecedor',
+    '<<obraNome>>': 'obraNome',
+    '<<assunto>>': 'assunto',
+    '<<servico>>': 'servico',
+  };
+  const combinedMap = { ...defaultMappings, ...(mapa || {}) };
+  const entries = Object.entries(combinedMap).filter(([k, v]) => Boolean(k && v));
 
   return xml.replace(/(<w:t(?:\s[^>]*)?>)([\s\S]*?)(<\/w:t>)/g, (_match, openTag, textContent, closeTag) => {
     let modified = textContent;
@@ -96,6 +120,91 @@ export function aplicarPlaceholderMapEmTextos(xml: string, mapa: Record<string, 
       .replace(/\bX{3,}\b/g, '[A DEFINIR NA REUNIÃO]');
 
     return `${openTag}${modified}${closeTag}`;
+  });
+}
+
+const escXml = (s: unknown) => String(s ?? '')
+  .replace(/&/g, '&amp;')
+  .replace(/</g, '&lt;')
+  .replace(/>/g, '&gt;');
+
+/**
+ * Converte qualquer placeholder residual, pendência não preenchida ou marcador genérico
+ * em runs estilizados em VERMELHO ALERTA (<w:color w:val="C00000"/>).
+ */
+export function converterPlaceholdersParaRunsVermelhos(xml: string): string {
+  if (!xml || typeof xml !== 'string') return xml;
+
+  return xml.replace(/<w:r\b([\s\S]*?)<\/w:r>/gi, (fullRun, runInner) => {
+    // Se o run já possui cor de alerta vermelha, mantém como está
+    if (/<w:color\b[^>]*w:val="(c00000|ff0000)"/i.test(fullRun)) {
+      return fullRun;
+    }
+
+    // Extrai w:rPr se existir
+    const rPrMatch = runInner.match(/<w:rPr\b[\s\S]*?<\/w:rPr>/i);
+    const baseRPr = rPrMatch ? rPrMatch[0] : '';
+
+    // Extrai texto dos nós <w:t>
+    const tMatch = runInner.match(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/i);
+    if (!tMatch) {
+      return fullRun;
+    }
+
+    const originalText = tMatch[1];
+    const placeholderPattern = /(\[A INFORMAR\]|\[caminho[\s_]+da[\s_]+rede\]|\[EXTRAIR[\s_]+DO[\s_]+FIRE[\s_]+FLIES\]|\[(?:CÓDIGO|CODIGO|NOME)[\s_]+DA[\s_]+OBRA\]|\[FORNECEDOR\]|\[ASSUNTO\]|\[SERVI[ÇC]O\]|R\$\s*X+|\[x{2,}\]|\bX{3,}\b|\[A DEFINIR NA REUNIÃO\]|\[A DEFINIR\]|\[PENDÊNCIA[^\]]*\])/gi;
+
+    if (!placeholderPattern.test(originalText)) {
+      return fullRun;
+    }
+
+    const parts = originalText.split(placeholderPattern);
+    let resultRuns = '';
+
+    for (const part of parts) {
+      if (!part) continue;
+
+      if (placeholderPattern.test(part)) {
+        let label = part;
+        if (/\[A INFORMAR\]/i.test(part)) {
+          label = '[PENDÊNCIA: A informar]';
+        } else if (/\[caminho[\s_]+da[\s_]+rede\]/i.test(part)) {
+          label = '[PENDÊNCIA: Caminho da rede a informar]';
+        } else if (/\[EXTRAIR[\s_]+DO[\s_]+FIRE[\s_]+FLIES\]/i.test(part)) {
+          label = '[PENDÊNCIA: Resumo da reunião a informar]';
+        } else if (/\[(?:CÓDIGO|CODIGO)[\s_]+DA[\s_]+OBRA\]/i.test(part)) {
+          label = '[PENDÊNCIA: Código da obra a informar]';
+        } else if (/\[NOME[\s_]+DA[\s_]+OBRA\]/i.test(part)) {
+          label = '[PENDÊNCIA: Nome da obra a informar]';
+        } else if (/\[FORNECEDOR\]/i.test(part)) {
+          label = '[PENDÊNCIA: Fornecedor a informar]';
+        } else if (/\[ASSUNTO\]/i.test(part)) {
+          label = '[PENDÊNCIA: Assunto a informar]';
+        } else if (/\[SERVI[ÇC]O\]/i.test(part)) {
+          label = '[PENDÊNCIA: Serviço a informar]';
+        } else if (/R\$\s*X+/i.test(part)) {
+          label = 'R$ [PENDÊNCIA: A definir]';
+        } else if (/\[x{2,}\]|\bX{3,}\b/i.test(part)) {
+          label = '[PENDÊNCIA: A definir]';
+        } else if (/\[A DEFINIR NA REUNIÃO\]/i.test(part)) {
+          label = '[A DEFINIR NA REUNIÃO]';
+        } else if (/\[A DEFINIR\]/i.test(part)) {
+          label = '[A DEFINIR]';
+        }
+
+        const redRPr = baseRPr
+          ? (baseRPr.includes('</w:rPr>')
+              ? baseRPr.replace('</w:rPr>', '<w:b/><w:color w:val="C00000"/></w:rPr>')
+              : `<w:rPr><w:b/><w:color w:val="C00000"/></w:rPr>`)
+          : '<w:rPr><w:b/><w:color w:val="C00000"/></w:rPr>';
+
+        resultRuns += `<w:r>${redRPr}<w:t xml:space="preserve">${escXml(label)}</w:t></w:r>`;
+      } else {
+        resultRuns += `<w:r>${baseRPr}<w:t xml:space="preserve">${part}</w:t></w:r>`;
+      }
+    }
+
+    return resultRuns || fullRun;
   });
 }
 
@@ -228,7 +337,7 @@ export async function renderAtaDocumentWithTemplate(
     nullGetter(part: any) {
       if (part.module) return ''; // Seção ou loop vazio
       naoResolvidas.add(part.value);
-      return '[A INFORMAR]'; // NUNCA string vazia para auditoria clara
+      return `[PENDÊNCIA: ${part.value || 'campo'} a informar]`; // NUNCA string vazia para auditoria clara
     },
   });
 
@@ -245,6 +354,22 @@ export async function renderAtaDocumentWithTemplate(
     throw new DocxRenderError('Falha ao renderizar o template', detalhe);
   }
 
+  // Pós-processamento: Converte qualquer pendência residual de placeholder em runs com destaque vermelho (<w:color w:val="C00000"/>)
+  const renderedZip = doc.getZip();
+  for (const filename of xmlFilenames) {
+    try {
+      const renderedXml = renderedZip.files[filename]?.asText();
+      if (renderedXml) {
+        const postProcessedXml = converterPlaceholdersParaRunsVermelhos(renderedXml);
+        if (postProcessedXml !== renderedXml) {
+          renderedZip.file(filename, postProcessedXml);
+        }
+      }
+    } catch (err: any) {
+      addLog('WARN', 'DOCX', `Aviso ao pós-processar XML ${filename} para pendências em vermelho: ${err.message}`);
+    }
+  }
+
   // Verify missing required fields from unresolved tags
   if (template.schema?.fields) {
     const obrigatoriasFaltando = template.schema.fields
@@ -259,7 +384,7 @@ export async function renderAtaDocumentWithTemplate(
     }
   }
 
-  const outputBuffer = doc.getZip().generate({
+  const outputBuffer = renderedZip.generate({
     type: 'nodebuffer',
     compression: 'DEFLATE'
   });

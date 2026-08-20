@@ -35,6 +35,7 @@ interface Props {
   abertura: AberturaData | null;
   finalData: FinalAtaData | null;
   activeTemplateName?: string;
+  serverError?: string;
   onSaveAndGenerate: (updatedData: {
     abertura: AberturaData | null;
     finalData: FinalAtaData;
@@ -48,9 +49,12 @@ export function FinalAtaValidationModal({
   abertura: initialAbertura,
   finalData: initialFinalData,
   activeTemplateName = '',
+  serverError,
   onSaveAndGenerate,
   loading
 }: Props) {
+  const modalBodyRef = React.useRef<HTMLDivElement>(null);
+  const [errorMsg, setErrorMsg] = useState<string>('');
   const [abertura, setAbertura] = useState<AberturaData>(() => ({
     obraCodigo: initialAbertura?.obraCodigo || '0590',
     obraNome: initialAbertura?.obraNome || 'Hospital Sabará',
@@ -272,22 +276,44 @@ export function FinalAtaValidationModal({
     ]);
   };
 
-  const handleConfirm = async () => {
-    const finalSummary = notes || abertura.resumoExecutivo || '';
-    const syncedAbertura: AberturaData = {
-      ...abertura,
-      resumoExecutivo: finalSummary
-    };
-    await onSaveAndGenerate({
-      abertura: syncedAbertura,
-      finalData: {
-        agreedItems,
-        pendingItems,
-        notes: finalSummary,
-        resumo: finalSummary
+  React.useEffect(() => {
+    if (serverError) {
+      setErrorMsg(serverError);
+      if (modalBodyRef.current) {
+        modalBodyRef.current.scrollTo({ top: 0, behavior: 'smooth' });
       }
-    });
+    }
+  }, [serverError]);
+
+  const handleConfirm = async () => {
+    setErrorMsg('');
+    try {
+      const finalSummary = notes || abertura.resumoExecutivo || '';
+      const syncedAbertura: AberturaData = {
+        ...abertura,
+        resumoExecutivo: finalSummary
+      };
+      await onSaveAndGenerate({
+        abertura: syncedAbertura,
+        finalData: {
+          agreedItems,
+          pendingItems,
+          notes: finalSummary,
+          resumo: finalSummary
+        }
+      });
+    } catch (err: any) {
+      const msg = err?.message || 'Erro ao processar e validar o documento DOCX da Ata Final.';
+      setErrorMsg(msg);
+      if (modalBodyRef.current) {
+        modalBodyRef.current.scrollTo({ top: 0, behavior: 'smooth' });
+      }
+    }
   };
+
+  const hasHeaderIssues = !abertura.obraCodigo || !abertura.fornecedor || !abertura.servico || !abertura.assunto;
+  const hasCommercialIssues = !abertura.valoresComerciais?.valorTotal;
+  const hasParticipantIssues = !(abertura.participantes && abertura.participantes.length > 0);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/70 backdrop-blur-xs animate-in fade-in">
@@ -346,6 +372,9 @@ export function FinalAtaValidationModal({
           >
             <AlertCircle size={15} className="text-red-500" />
             2. Pendências Críticas ({pendingItems.length})
+            {pendingItems.length > 0 && (
+              <span className="ml-1 w-2 h-2 rounded-full bg-red-500" />
+            )}
           </button>
 
           <button
@@ -359,6 +388,9 @@ export function FinalAtaValidationModal({
           >
             <Users size={15} className="text-indigo-600" />
             3. Participantes ({(abertura.participantes || []).length})
+            {hasParticipantIssues && (
+              <span className="ml-1 w-2 h-2 rounded-full bg-amber-500" />
+            )}
           </button>
 
           <button
@@ -385,6 +417,9 @@ export function FinalAtaValidationModal({
           >
             <Building2 size={15} />
             5. Obra & Cabeçalho
+            {hasHeaderIssues && (
+              <span className="ml-1 w-2 h-2 rounded-full bg-amber-500" />
+            )}
           </button>
 
           <button
@@ -398,6 +433,9 @@ export function FinalAtaValidationModal({
           >
             <DollarSign size={15} />
             6. Valores Comerciais
+            {hasCommercialIssues && (
+              <span className="ml-1 w-2 h-2 rounded-full bg-amber-500" />
+            )}
           </button>
 
           <button
@@ -415,7 +453,84 @@ export function FinalAtaValidationModal({
         </div>
 
         {/* Modal Scrollable Body */}
-        <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50 space-y-6">
+        <div ref={modalBodyRef} className="flex-1 overflow-y-auto p-6 bg-slate-50/50 space-y-6">
+          {/* Detailed Error / Quality Verification Report Alert Card */}
+          {errorMsg && (
+            <div className="bg-red-50 border-2 border-red-300 rounded-xl p-4 shadow-sm animate-in fade-in slide-in-from-top-2 space-y-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="flex items-start gap-3">
+                  <div className="p-2 bg-red-100 border border-red-200 rounded-lg text-red-600 shrink-0 mt-0.5">
+                    <AlertTriangle size={20} />
+                  </div>
+                  <div>
+                    <h3 className="text-sm font-bold text-red-900 flex items-center gap-2">
+                      Ajustes Necessários para a Geração da Ata Final
+                    </h3>
+                    <div className="text-xs text-red-700 mt-1 whitespace-pre-line font-medium leading-relaxed">
+                      {errorMsg}
+                    </div>
+                  </div>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setErrorMsg('')}
+                  className="text-red-400 hover:text-red-700 p-1 rounded-md transition-colors shrink-0"
+                  title="Ocultar aviso de erro"
+                >
+                  <X size={16} />
+                </button>
+              </div>
+
+              {/* Action Buttons to Switch to the Tab Requiring Fixes */}
+              <div className="flex flex-wrap items-center gap-2 pt-2 border-t border-red-200">
+                <span className="text-[11px] font-bold uppercase tracking-wider text-red-800">
+                  Navegar para Ajustar:
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('header')}
+                  className="px-2.5 py-1 text-xs font-semibold bg-white text-red-700 hover:bg-red-100 border border-red-200 rounded-md transition-colors flex items-center gap-1 shadow-2xs"
+                >
+                  <Building2 size={13} /> Obra & Cabeçalho
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('commercial')}
+                  className="px-2.5 py-1 text-xs font-semibold bg-white text-red-700 hover:bg-red-100 border border-red-200 rounded-md transition-colors flex items-center gap-1 shadow-2xs"
+                >
+                  <DollarSign size={13} /> Valores Comerciais
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('prazos')}
+                  className="px-2.5 py-1 text-xs font-semibold bg-white text-red-700 hover:bg-red-100 border border-red-200 rounded-md transition-colors flex items-center gap-1 shadow-2xs"
+                >
+                  <Clock size={13} /> Cronograma & Prazos
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('pending')}
+                  className="px-2.5 py-1 text-xs font-semibold bg-white text-red-700 hover:bg-red-100 border border-red-200 rounded-md transition-colors flex items-center gap-1 shadow-2xs"
+                >
+                  <AlertCircle size={13} /> Pendências Críticas
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('agreed')}
+                  className="px-2.5 py-1 text-xs font-semibold bg-white text-red-700 hover:bg-red-100 border border-red-200 rounded-md transition-colors flex items-center gap-1 shadow-2xs"
+                >
+                  <CheckSquare size={13} /> Itens Acordados
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setActiveTab('participantes')}
+                  className="px-2.5 py-1 text-xs font-semibold bg-white text-red-700 hover:bg-red-100 border border-red-200 rounded-md transition-colors flex items-center gap-1 shadow-2xs"
+                >
+                  <Users size={13} /> Participantes
+                </button>
+              </div>
+            </div>
+          )}
           {/* TAB 1: ITENS ACORDADOS */}
           {activeTab === 'agreed' && (
             <div className="space-y-4 animate-in fade-in">

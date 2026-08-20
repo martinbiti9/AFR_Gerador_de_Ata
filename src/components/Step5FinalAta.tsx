@@ -451,6 +451,7 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
         setIsWarningModalOpen(true);
       }
       setError(errMsg);
+      throw err;
     } finally {
       setLoadingDocx(false);
     }
@@ -1080,6 +1081,7 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
           abertura={state.abertura}
           finalData={draftData}
           activeTemplateName={activeTemplateName}
+          serverError={error}
           onSaveAndGenerate={handleSaveAndGenerateValidation}
           loading={loadingDocx}
         />
