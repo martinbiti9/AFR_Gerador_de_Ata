@@ -67,6 +67,13 @@ export interface TableSchema {
   sampleRowTags: string[];
 }
 
+export interface VariavelExemplo {
+  token: string;    // literal no template: "[xx]", "R$ XXXX", "5%"
+  rotulo: string;   // rótulo inferido do contexto da linha
+  nome: string;     // slug camelCase derivado do rótulo
+  tipo: 'placeholder' | 'baseline';
+}
+
 export interface TableInspectionRow {
   index: number;
   cells: string[];
@@ -108,6 +115,7 @@ export interface TemplateDocument {
   tables?: TableInspection[];
   templateType?: string;
   rawTextPreview?: string;
+  rawTextFull?: string;
   isActive: boolean;
 }
 

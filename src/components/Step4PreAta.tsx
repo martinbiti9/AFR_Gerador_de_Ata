@@ -198,13 +198,17 @@ export function Step4PreAta({ state, updateState, onNavigateToTemplates }: Props
       {/* Pre-Ata Validation Modal */}
       <PreAtaValidationModal
         isOpen={isValidatingModalOpen}
-        onClose={() => setIsValidatingModalOpen(false)}
+        onClose={() => {
+          setIsValidatingModalOpen(false);
+          setError(''); // clear error when closing modal
+        }}
         abertura={state.abertura}
         analysisResult={state.analysisResult}
         divergences={state.divergences}
         activeTemplateName={activeTemplateName}
         onSaveAndGenerate={handleSaveAndGenerate}
         loading={loading}
+        error={error}
       />
 
       {/* Warning Modal if no template is saved */}

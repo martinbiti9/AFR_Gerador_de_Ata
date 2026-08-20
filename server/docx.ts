@@ -32,6 +32,7 @@ export interface DocxTemplateInspection {
   hasLoopTags: boolean;
   tableHeaders: string[];
   rawTextPreview: string;
+  rawTextFull: string;
   tables: TableInspection[];
   placeholderMap: Record<string, string>;
   initialSchema?: TemplateSchema;
@@ -86,6 +87,18 @@ export function buildInitialPlaceholderMap(detectedPlaceholders: string[]): Reco
   }
 
   return map;
+}
+
+function extrairTextoCelula(tcXml: string): string {
+  const pBlocks = findBlocks(tcXml, 'w:p');
+  const paragrafos: string[] = [];
+  for (const p of pBlocks) {
+    const pXml = tcXml.slice(p.start, p.end);
+    const runs = pXml.match(/<w:t(?:\s[^>]*)?>([\s\S]*?)<\/w:t>/gi) || [];
+    const texto = runs.map(r => r.replace(/<[^>]+>/g, '')).join('');
+    paragrafos.push(texto.trim());
+  }
+  return paragrafos.filter(Boolean).join('\n');
 }
 
 /**
@@ -193,20 +206,16 @@ export async function parseDocxTemplate(buffer: Buffer): Promise<DocxTemplateIns
         const cells: string[] = [];
         for (let cIdx = 0; cIdx < tcBlocks.length; cIdx++) {
           const tcXml = trXml.slice(tcBlocks[cIdx].start, tcBlocks[cIdx].end);
-          const cellTexts = tcXml.match(/<w:t(?:\s[^>]*)?>([^<]*)<\/w:t>/gi) || [];
-          const text = cellTexts.map(c => c.replace(/<[^>]+>/g, '')).join(' ').trim();
-          cells.push(text.length > 80 ? text.substring(0, 77) + '...' : text);
+          cells.push(extrairTextoCelula(tcXml));
         }
 
-        // Limit inspected rows stored to top 10 rows to save memory
-        if (rIdx < 10 || rIdx === trBlocks.length - 1) {
-          rows.push({ index: rIdx, cells });
-        }
+        // Armazena todas as linhas da tabela sem truncamento
+        rows.push({ index: rIdx, cells });
 
-        // First row headers
-        if (rIdx === 0 && tIdx === 0) {
+        // Coleta cabeçalhos na primeira linha de cada tabela
+        if (rIdx === 0) {
           cells.forEach(c => {
-            if (c && c.length < 40 && !tableHeaders.includes(c)) {
+            if (c && c.length < 60 && !tableHeaders.includes(c)) {
               tableHeaders.push(c);
             }
           });
@@ -251,12 +260,13 @@ export async function parseDocxTemplate(buffer: Buffer): Promise<DocxTemplateIns
 
     const summary = `DOCX carregado: ${paragraphsCount} parágrafos, ${tablesCount} tabela(s) e ${detectedPlaceholders.length} variáveis identificadas (${detectedPlaceholders.slice(0, 8).join(', ')}${detectedPlaceholders.length > 8 ? '...' : ''}).`;
 
-    addLog('INFO', 'DOCX', `Template DOCX inspecionado com sucesso: ${detectedPlaceholders.length} tags encontradas, ${tablesCount} tabelas`, {
+    addLog('INFO', 'DOCX', `Template DOCX inspecionado com sucesso: ${detectedPlaceholders.length} tags encontradas, ${tablesCount} tabelas, ${inspectedTables.reduce((acc, t) => acc + t.rows.length, 0)} linhas totais, ${rawText.length} caracteres`, {
       detectedPlaceholders,
       paragraphsCount,
       tablesCount,
       tableHeaders,
-      inspectedTablesCount: inspectedTables.length
+      inspectedTablesCount: inspectedTables.length,
+      rawTextLength: rawText.length
     });
 
     return {
@@ -267,6 +277,7 @@ export async function parseDocxTemplate(buffer: Buffer): Promise<DocxTemplateIns
       hasLoopTags,
       tableHeaders,
       rawTextPreview: rawText.substring(0, 1000),
+      rawTextFull: rawText,
       tables: inspectedTables,
       placeholderMap,
       initialSchema
@@ -281,6 +292,7 @@ export async function parseDocxTemplate(buffer: Buffer): Promise<DocxTemplateIns
       hasLoopTags: false,
       tableHeaders: [],
       rawTextPreview: '',
+      rawTextFull: '',
       tables: [],
       placeholderMap: buildInitialPlaceholderMap([])
     };

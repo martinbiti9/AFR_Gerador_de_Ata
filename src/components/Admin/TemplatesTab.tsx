@@ -3,7 +3,7 @@ import { TemplateConfig } from '../../types';
 import { 
   FileText, Download, RotateCcw, UploadCloud, CheckCircle2, 
   AlertCircle, Clock, FileCode, Check, FileCheck, Info, X, Tag,
-  Layers, Table as TableIcon, Sparkles, HelpCircle, ChevronDown, ChevronUp, Play, Trash2
+  Layers, Table as TableIcon, Sparkles, HelpCircle, ChevronDown, ChevronUp, Play, Trash2, Loader2
 } from 'lucide-react';
 import { SchemaEditorModal } from './SchemaEditorModal';
 import { safeFetchJson, safeFetchBlob } from '../../utils/api';
@@ -24,6 +24,7 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
   const [isUploading, setIsUploading] = useState(false);
   const [expandedDetailsId, setExpandedDetailsId] = useState<string | null>(null);
   const [editingSchemaTemplate, setEditingSchemaTemplate] = useState<TemplateConfig | null>(null);
+  const [activatingId, setActivatingId] = useState<string | null>(null);
 
   // Form for new template version upload
   const [templateFile, setTemplateFile] = useState<File | null>(null);
@@ -132,16 +133,14 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
   };
 
   const handleRollback = async (targetId: string, versionNum: number) => {
-    if (!confirm(`Deseja realmente ativar a Versão v${versionNum} como template padrão?`)) {
-      return;
-    }
-
     try {
+      setActivatingId(targetId);
+      setErrorMsg('');
       await safeFetchJson(`/api/admin/templates/${targetId}/rollback`, {
         method: 'POST',
       });
 
-      setStatusMsg(`Template v${versionNum} definido como ativo no Firestore.`);
+      setStatusMsg(`Template v${versionNum} definido e ativado como padrão no sistema.`);
       await fetchTemplates();
       onRefreshLogs?.();
       setTimeout(() => setStatusMsg(''), 4000);
@@ -153,6 +152,8 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
         details: err.message || err,
         path: `templates/${targetId}`
       });
+    } finally {
+      setActivatingId(null);
     }
   };
 
@@ -201,12 +202,11 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
       a.remove();
       window.URL.revokeObjectURL(url);
     } catch (err: any) {
-      alert('Erro ao baixar arquivo do template: ' + (err.message || err));
+      setErrorMsg('Erro ao baixar arquivo do template: ' + (err.message || err));
     }
   };
 
-  const activeTemplate = versions.find(v => v.id === activeId) || versions[0];
-  const last3Versions = versions.slice(0, 3);
+  const activeTemplate = versions.find(v => v.id === activeId) || versions.find(v => v.isActive) || versions[0];
 
   if (loading) {
     return (
@@ -474,7 +474,7 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
             <Clock size={15} className="text-slate-500" />
             Templates Cadastrados no Banco de Dados (Firestore)
           </h4>
-          <span className="text-[10px] text-slate-400 font-medium">Persistência permanente</span>
+          <span className="text-[10px] text-slate-400 font-medium">Persistência permanente ({versions.length} {versions.length === 1 ? 'modelo' : 'modelos'})</span>
         </div>
 
         {versions.length === 0 ? (
@@ -495,23 +495,24 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
           </div>
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            {last3Versions.map((v) => {
-              const isActive = v.id === activeId;
+            {versions.map((v) => {
+              const isActive = v.id === activeId || (Boolean(v.isActive) && (!activeId || v.id === activeId));
+              const isActivating = activatingId === v.id;
 
               return (
                 <div
                   key={v.id}
                   className={`p-4 rounded-xl border transition-all flex flex-col justify-between ${
                     isActive
-                      ? 'bg-white border-blue-500 shadow-md ring-1 ring-blue-500'
-                      : 'bg-white/80 border-slate-200 hover:border-slate-300'
+                      ? 'bg-white border-blue-500 shadow-md ring-2 ring-blue-500/20'
+                      : 'bg-white/90 border-slate-200 hover:border-slate-300'
                   }`}
                 >
                   <div>
                     <div className="flex items-start justify-between gap-2 mb-2">
                       <div>
                         <span className={`text-[10px] font-extrabold px-2 py-0.5 rounded uppercase ${
-                          isActive ? 'bg-blue-100 text-blue-700' : 'bg-slate-100 text-slate-600'
+                          isActive ? 'bg-blue-100 text-blue-700 ring-1 ring-blue-300' : 'bg-slate-100 text-slate-600'
                         }`}>
                           Versão v{v.version} {isActive ? '• ATIVO' : ''}
                         </span>
@@ -556,7 +557,7 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
                     <button
                       type="button"
                       onClick={() => setEditingSchemaTemplate(v)}
-                      className="w-full flex items-center justify-center gap-1.5 py-1.5 px-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-bold rounded transition-colors border border-indigo-200"
+                      className="w-full flex items-center justify-center gap-1.5 py-1.5 px-2 bg-indigo-50 hover:bg-indigo-100 text-indigo-700 text-[11px] font-bold rounded-lg transition-colors border border-indigo-200"
                     >
                       <FileCode size={13} />
                       Editar Schema & Testar
@@ -564,8 +565,9 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
 
                     <div className="flex items-center gap-2">
                       <button
-                        onClick={() => handleDownload(v.id || '')}
-                        className="flex-1 flex items-center justify-center gap-1 py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold rounded transition-colors"
+                        type="button"
+                        onClick={() => handleDownload(v.id || '', v.originalFileName || `template_v${v.version}.docx`)}
+                        className="flex-1 flex items-center justify-center gap-1 py-1.5 px-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-[11px] font-bold rounded-lg transition-colors"
                         title="Baixar arquivo .DOCX deste template"
                       >
                         <Download size={13} />
@@ -574,18 +576,30 @@ export function TemplatesTab({ onRefreshLogs }: Props) {
 
                       {!isActive && (
                         <button
+                          type="button"
                           onClick={() => handleRollback(v.id || '', v.version)}
-                          className="flex-1 flex items-center justify-center gap-1 py-1.5 px-2 bg-amber-50 hover:bg-amber-100 border border-amber-200 text-amber-800 text-[11px] font-bold rounded transition-colors"
+                          disabled={Boolean(activatingId)}
+                          className="flex-1 flex items-center justify-center gap-1.5 py-1.5 px-2 bg-amber-50 hover:bg-amber-100 active:scale-95 disabled:opacity-60 disabled:cursor-not-allowed border border-amber-300 text-amber-900 text-[11px] font-bold rounded-lg transition-all shadow-xs"
                           title="Ativar esta versão como padrão"
                         >
-                          <RotateCcw size={13} />
-                          Ativar
+                          {isActivating ? (
+                            <>
+                              <Loader2 size={13} className="animate-spin text-amber-700" />
+                              <span>Ativando...</span>
+                            </>
+                          ) : (
+                            <>
+                              <RotateCcw size={13} className="text-amber-700" />
+                              <span>Ativar</span>
+                            </>
+                          )}
                         </button>
                       )}
 
                       <button
+                        type="button"
                         onClick={() => handleDeleteTemplate(v.id || '', v.name, v.version)}
-                        className="p-1.5 bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 hover:text-red-700 rounded transition-colors"
+                        className="p-1.5 bg-red-50 hover:bg-red-100 border border-red-200 text-red-600 hover:text-red-700 rounded-lg transition-colors"
                         title="Excluir este template do banco de dados"
                       >
                         <Trash2 size={13} />

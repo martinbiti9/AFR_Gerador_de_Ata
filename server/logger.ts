@@ -37,15 +37,18 @@ export function addLog(
     memoryLogs.pop();
   }
 
-  // Also print to standard stdout
-  const actorStr = entry.actorEmail ? ` [${entry.actorEmail}]` : '';
-  const prefix = `[${entry.timestamp}] [${entry.level}] [${entry.category}]${actorStr}`;
-  if (level === 'ERROR') {
-    console.error(prefix, message, details || '');
-  } else if (level === 'WARN') {
-    console.warn(prefix, message, details || '');
-  } else {
-    console.log(prefix, message, details || '');
+  // Also print to standard stdout (skip if running in test environment)
+  const isTest = process.env.NODE_ENV === 'test' || process.env.npm_lifecycle_event === 'test';
+  if (!isTest) {
+    const actorStr = entry.actorEmail ? ` [${entry.actorEmail}]` : '';
+    const prefix = `[${entry.timestamp}] [${entry.level}] [${entry.category}]${actorStr}`;
+    if (level === 'ERROR') {
+      console.error(prefix, message, details || '');
+    } else if (level === 'WARN') {
+      console.warn(prefix, message, details || '');
+    } else {
+      console.log(prefix, message, details || '');
+    }
   }
 
   return entry;

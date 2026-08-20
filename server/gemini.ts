@@ -1,6 +1,6 @@
 import { GoogleGenAI, Type } from '@google/genai';
 import { getStoredPrompts, getStoredModelsConfig } from './configStore';
-import { getActiveTemplateFromDb, extrairTextosPadraoDoTemplate } from './templateRepository';
+import { getActiveTemplateFromDb, extrairTextosPadraoDoTemplate, encontrarTabelaCorpo } from './templateRepository';
 import { 
   TopicItemSchema, 
   DivergenceItemSchema, 
@@ -112,55 +112,59 @@ function buildTemplateContextPrompt(template: any): string {
     return 'ATENÇÃO: Nenhum template DOCX cadastrado.';
   }
 
-  const schema: TemplateSchema = template.schema;
-  const fieldsDesc = schema?.fields
-    ? schema.fields.map(f => `- ${f.name} (${f.type}${f.required ? ', OBRIGATÓRIO' : ''}): ${f.description || f.name}`).join('\n')
-    : 'Campos padrão corporativos';
+  const templateBodyTable = encontrarTabelaCorpo(template.tables || []);
+  const textosPadrao = templateBodyTable ? extrairTextosPadraoDoTemplate(templateBodyTable) : [];
 
-  const loopsDesc = schema?.loops
-    ? schema.loops.map(l => `- Loop/Tabela {${l.tag}}: ${l.description || l.tag} (Colunas: ${l.columns?.map(c => `${c.label || c.key} (col ${c.cellIndex}): ${c.key}`).join(', ') || 'padrão'})`).join('\n')
-    : 'Tabela principal de itens e tópicos';
+  const textosPadraoDesc = textosPadrao.map(tp => {
+    const vars = tp.variaveisExemplo.length
+      ? `\n    Parâmetros a preencher/negociar: ${tp.variaveisExemplo.map(v =>
+          `{${v.nome}} (no modelo: "${v.token}", ref.: ${v.rotulo || 'geral'}, tipo: ${v.tipo})`).join('; ')}`
+      : '';
+    return `  Item ${tp.num} - ${tp.titulo || 'Sem título'}:\n    "${tp.descricao}"${vars}`;
+  }).join('\n\n');
 
-  let tablesInspectionDesc = '';
-  if (template.tables && template.tables.length > 0) {
-    tablesInspectionDesc = template.tables.map((t: any, idx: number) => {
-      const headers = t.rows?.[0]?.cells?.filter(Boolean).join(' | ') || 'Sem cabeçalho explícito';
-      const sampleRow = t.rows?.[1]?.cells?.filter(Boolean).join(' | ') || '';
-      return `  • Tabela #${idx + 1} (${t.rowCount} linhas x ${t.colCount} colunas):\n    - Cabeçalho: [ ${headers} ]\n    ${sampleRow ? `- Linha de exemplo do template: [ ${sampleRow} ]` : ''}`;
-    }).join('\n');
-  }
+  const rawFull = (template.rawTextFull || template.rawTextPreview || '')
+    .replace(/[ \t]+/g, ' ')
+    .slice(0, 20000);
 
-  const rawPreview = template.rawTextPreview
-    ? template.rawTextPreview.replace(/\s+/g, ' ').slice(0, 2500)
-    : '';
+  const referenceJson = {
+    templateInfo: {
+      name: template.name || 'Template Padrão',
+      version: template.version || 1,
+      department: template.companyName || 'DEPARTAMENTO DE SUPRIMENTOS - AFONSO FRANÇA ENGENHARIA',
+      structureSummary: template.structureSummary || 'Documento DOCX corporativo com tabelas de deliberações e campos de identificação da obra.'
+    },
+    schema: template.schema || null,
+    tablesInspection: template.tables?.map((t: any, idx: number) => ({
+      tableIndex: idx + 1,
+      rowCount: t.rowCount,
+      columnCount: t.columnCount,
+      headers: t.rows?.[0]?.cells?.filter(Boolean) || [],
+      sampleRow: t.rows?.[1]?.cells?.filter(Boolean) || []
+    })) || [],
+    rawTextPreview: rawFull.slice(0, 2500)
+  };
 
-  return `
-======================================================================
-ESTRUTURA E CONTEÚDO DO TEMPLATE DOCX OFICIAL ATIVO (REFERÊNCIA OBRIGATÓRIA):
-- Nome do Template: "${template.name || 'Template Padrão'}" (v${template.version || 1})
-- Departamento: "${template.companyName || 'DEPARTAMENTO DE SUPRIMENTOS - AFONSO FRANÇA ENGENHARIA'}"
-- Resumo Estrutural: ${template.structureSummary || 'Documento DOCX corporativo com tabelas de deliberações e campos de identificação da obra.'}
+  return `======================================================================
+DADOS DO TEMPLATE DOCX OFICIAL ATIVO EM FORMATO JSON (REFERÊNCIA OBRIGATÓRIA):
+\`\`\`json
+${JSON.stringify(referenceJson, null, 2)}
+\`\`\`
 
-CAMPOS MAPEADOS NO TEMPLATE:
-${fieldsDesc}
+TEXTOS PADRÃO INTEGRAIS DA TABELA DE CORPO (itens que DEVEM constar na Ata Final, mantidos como MANTIDO_PADRAO quando não alterados na reunião):
+${textosPadraoDesc}
 
-TABELAS E LOOPS DE CONTEÚDO DETECTADOS:
-${loopsDesc}
+VARIÁVEIS DE EXEMPLO DO MODELO:
+Os marcadores como [xx], R$ XXXX, XXX e [xxx] indicam parâmetros que devem ser preenchidos com o que for deliberado na reunião. Valores concretos presentes no modelo (percentuais, prazos em dias, condições de pagamento) são o PADRÃO BASELINE da construtora: mantenha-os quando a reunião não os alterar e substitua-os apenas com base em decisão explícita da transcrição, nunca inventando valores novos. Quando não houver deliberação, use [A DEFINIR NA REUNIÃO].
 
-INSPEÇÃO DETALHADA DAS TABELAS DO MODELO:
-${tablesInspectionDesc}
-
-AMOSTRA DO CONTEÚDO TEXTUAL DO TEMPLATE (VOCABULÁRIO, DISPOSIÇÃO E PADRÃO AFONSO FRANÇA):
-"""
-${rawPreview}
-"""
+AMOSTRA DO CONTEÚDO TEXTUAL DO MODELO:
+${rawFull}
 
 DIRETRIZES DE DISPOSIÇÃO E FORMATAÇÃO:
-1. Mantenha estrita coerência com a disposição das tabelas e títulos do template DOCX acima.
+1. Mantenha estrita coerência com a disposição das tabelas e campos mapeados no JSON do template DOCX acima.
 2. Cada item gerado deve corresponder exatamente às colunas identificadas (ex: Número, Descrição Técnica/Acordada, Responsável, Prazo).
 3. Utilize a linguagem técnica de engenharia civil, contratos e suprimentos da Afonso França.
-======================================================================
-`;
+======================================================================`;
 }
 
 // ==================== 1. CHECKLIST ANALYSIS IN BATCHES (PROMPT 07) ====================
@@ -190,7 +194,7 @@ const checklistBatchResponseSchema = {
 };
 
 export async function analyzeChecklist(
-  files: { inlineData: { data: string; mimeType: string } }[],
+  files: any[],
   meetingId?: string,
   options?: { batchSize?: number }
 ) {
@@ -205,7 +209,7 @@ export async function analyzeChecklist(
   const promptVersion = PROMPT_VERSIONS.checklist;
 
   // Extrai taxonomia padrão a partir do template oficial (PROMPT 05 / 07)
-  const templateBodyTable = template.tables?.[3] || template.tables?.find((t: any) => t.colCount === 4 && t.rowCount >= 3);
+  const templateBodyTable = encontrarTabelaCorpo(template.tables || []);
   const taxonomiaPadraoTemplate = templateBodyTable ? extrairTextosPadraoDoTemplate(templateBodyTable) : [];
 
   // Mapeia tópicos base a partir da taxonomia do template
@@ -214,22 +218,35 @@ export async function analyzeChecklist(
     descricaoPadrao: item.descricao || ''
   }));
 
-  // Tamanho do lote: 6 a 8 tópicos (default 7 conforme SPEC)
-  const batchSize = Math.max(6, Math.min(8, options?.batchSize || 7));
+  // Tópicos padrão de engenharia de suprimentos para complementar caso a taxonomia esteja enxuta
+  const standardEngineeringTaxonomy = [
+    { title: 'Escopo, Objeto e Especificações Técnicas dos Serviços', descricaoPadrao: '' },
+    { title: 'Critério de Medição, Faturamento e Condições de Pagamento', descricaoPadrao: '' },
+    { title: 'Segurança do Trabalho, NR-18, NR-35, PCMSO/PGR e EPIs', descricaoPadrao: '' },
+    { title: 'Logística de Canteiro, Horários, Carga, Descarga e Içamento', descricaoPadrao: '' },
+    { title: 'Retenções Contratuais, Garantias e Risco Sacado', descricaoPadrao: '' },
+    { title: 'Cronograma Físico, Prazos de Mobilização, Execução e Entrega', descricaoPadrao: '' },
+    { title: 'Penalidades, Multas por Atraso e Não Conformidades', descricaoPadrao: '' },
+    { title: 'Documentação Técnica, ART/RRT, Seguros e Responsabilidades', descricaoPadrao: '' },
+    { title: 'Qualidade, Ensaios Tecnológicos e Aceite de Serviços', descricaoPadrao: '' },
+    { title: 'Obrigações Trabalhistas, Registro de Funcionários e Folha', descricaoPadrao: '' },
+    { title: 'Meio Ambiente, Limpeza e Descarte de Entulhos/Resíduos', descricaoPadrao: '' },
+    { title: 'Instalações Provisórias, Água, Energia e Refeitório', descricaoPadrao: '' }
+  ];
 
-  // Define lotes de tópicos a serem analisados
-  const candidateTopics = baseTopicsTaxonomy.length > 0
+  const candidateTopics = baseTopicsTaxonomy.length >= 6
     ? baseTopicsTaxonomy
     : [
-        { title: 'Escopo e Objeto dos Serviços', descricaoPadrao: '' },
-        { title: 'Critério de Medição e Pagamento', descricaoPadrao: '' },
-        { title: 'Segurança do Trabalho e EPIs', descricaoPadrao: '' },
-        { title: 'Logística de Canteiro e Descarga', descricaoPadrao: '' },
-        { title: 'Retenções Contratuais e Garantias', descricaoPadrao: '' },
-        { title: 'Penalidades e Multas por Atraso', descricaoPadrao: '' },
-        { title: 'Documentação Técnica e ART', descricaoPadrao: '' }
+        ...baseTopicsTaxonomy,
+        ...standardEngineeringTaxonomy.filter(st => 
+          !baseTopicsTaxonomy.some(bt => normalizarTexto(bt.title).includes(normalizarTexto(st.title).slice(0, 8)))
+        )
       ];
 
+  // Tamanho do lote: 5 a 7 tópicos
+  const batchSize = Math.max(4, Math.min(7, options?.batchSize || 6));
+
+  // Define lotes de tópicos a serem analisados
   const batches: (typeof candidateTopics)[] = [];
   for (let i = 0; i < candidateTopics.length; i += batchSize) {
     batches.push(candidateTopics.slice(i, i + batchSize));
@@ -242,7 +259,7 @@ export async function analyzeChecklist(
       totalBatches,
       currentBatch: 0,
       progressPercent: 0,
-      message: `Iniciando análise do Check List em ${totalBatches} lote(s)...`
+      message: `Iniciando análise completa do Check List em ${totalBatches} lote(s)...`
     });
   }
 
@@ -255,7 +272,7 @@ export async function analyzeChecklist(
   for (let batchIdx = 0; batchIdx < totalBatches; batchIdx++) {
     const currentBatch = batches[batchIdx];
     const batchNumber = batchIdx + 1;
-    const progressPercent = Math.round((batchNumber / totalBatches) * 100);
+    const progressPercent = Math.round((batchNumber / totalBatches) * 90);
 
     if (meetingId) {
       setAnalysisProgress(meetingId, {
@@ -272,7 +289,7 @@ export async function analyzeChecklist(
     ).join('\n');
 
     const systemInstruction = `Você é um Engenheiro de Suprimentos Sênior Especialista em Contratações e Gestão de Obras Civis da Afonso França Engenharia.
-Sua missão é realizar a LEITURA, EXTRAÇÃO DE PREMISSAS E ANÁLISE DE CONFORMIDADE dos documentos de Check List da Obra para o seguinte LOTE ESPECÍFICO de tópicos da taxonomia oficial:
+Sua missão é realizar a LEITURA COMPLETA, EXTRAÇÃO DE PREMISSAS E ANÁLISE DE CONFORMIDADE dos documentos de Check List da Obra (incluindo planilhas Excel, memoriais descritivos, normas de canteiro e PDFs) para o seguinte LOTE ESPECÍFICO de tópicos da taxonomia oficial:
 
 LOTE ${batchNumber} de ${totalBatches}:
 ${batchTopicsPrompt}
@@ -285,18 +302,18 @@ Não invente itens ou grupos de informações não existentes no material fonte.
 ${templateContext}
 
 REGRAS DE FORMATAÇÃO DO JSON DE RESPOSTA (Lote ${batchNumber}/${totalBatches}):
-1. "tipoFornecimento": Tipo de fornecimento da contratação.
+1. "tipoFornecimento": Tipo de fornecimento da contratação (ex: "Subempreitada de Serviços e Materiais", "Locação de Equipamentos com Operador", etc.).
 2. "topics": Array contendo os tópicos deste lote e eventuais regras específicas encontradas nos documentos anexos:
    - "title": Título conciso da regra/premissa enquadrada na taxonomia.
    - "regraObra": Descrição clara e detalhada da especificação técnica ou operacional exigida pela obra.
    - "excecaoAdmitida": Flexibilização admitida pela obra (ou "N/A" caso a regra seja estrita).
    - "pontoAtencao": Ponto crítico de risco ou atenção a ser alinhado na reunião com o fornecedor.
    - "perguntaFornecedor": Pergunta objetiva e assertiva a ser feita ao fornecedor na mesa de negociação.
-   - "source": Identificação da fonte no Check List.
+   - "source": Identificação da fonte no Check List (ex: "Planilha Check List Canteiro", "Memorial Descritivo").
 
 ${prompts.checklistInstructions ? `\nINSTRUÇÕES ADICIONAIS DO USUÁRIO:\n${prompts.checklistInstructions}` : ''}`;
 
-    const promptText = `Analise os documentos de Check List da Obra anexados e extraia as premissas para os tópicos do Lote ${batchNumber} (${currentBatch.map(c => c.title).join(', ')}), além de qualquer regra nova complementar aplicável.`;
+    const promptText = `Analise detalhadamente todos os arquivos de Check List da Obra anexados (planilhas, textos, PDFs) e extraia todas as premissas e regras para os tópicos do Lote ${batchNumber} (${currentBatch.map(c => c.title).join(', ')}), além de quaisquer outras regras da obra aplicáveis.`;
 
     const contents = [
       ...files,
@@ -344,7 +361,90 @@ ${prompts.checklistInstructions ? `\nINSTRUÇÕES ADICIONAIS DO USUÁRIO:\n${pro
         topicsCount: rawTopics.length
       });
     } catch (batchErr: any) {
-      addLog('WARN', 'AI', `[promptVersion: ${promptVersion}] Aviso no processamento do lote ${batchNumber}/${totalBatches}: ${batchErr.message}`);
+      addLog('WARN', 'AI', `[promptVersion: ${promptVersion}] Erro no lote ${batchNumber} com modelo ${modelName} (${batchErr.message}). Tentando modelo fallback...`);
+      try {
+        const fallbackResp = await ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents,
+          config: {
+            systemInstruction,
+            responseMimeType: 'application/json',
+            responseSchema: checklistBatchResponseSchema,
+            temperature: 0.2
+          }
+        });
+        const parsedFallback = safeParseJsonFromAI(fallbackResp.text || '{}', {
+          tipoFornecimento: detectedTipoFornecimento,
+          topics: []
+        });
+        if (parsedFallback.tipoFornecimento) {
+          detectedTipoFornecimento = parsedFallback.tipoFornecimento;
+        }
+        const rawFallbackTopics = Array.isArray(parsedFallback.topics) ? parsedFallback.topics : [];
+        aggregatedTopics.push(...rawFallbackTopics);
+        addLog('INFO', 'AI', `Lote ${batchNumber} recuperado com sucesso via modelo fallback gemini-2.5-flash (${rawFallbackTopics.length} tópicos)`);
+      } catch (fbErr: any) {
+        addLog('WARN', 'AI', `Aviso: Falha no processamento do lote ${batchNumber}: ${fbErr.message}`);
+      }
+    }
+  }
+
+  // ================= CRITICAL: VARREDURA GLOBAL DE FALLBACK SE NENHUM TÓPICO FOR ENCONTRADO =================
+  if (aggregatedTopics.length === 0) {
+    if (meetingId) {
+      setAnalysisProgress(meetingId, {
+        stage: 'CHECKLIST_BATCH',
+        totalBatches: 1,
+        currentBatch: 1,
+        progressPercent: 92,
+        message: 'Executando varredura profunda e completa em todos os documentos do Check List...'
+      });
+    }
+
+    addLog('INFO', 'AI', `[promptVersion: ${promptVersion}] Executando varredura global profunda sobre os documentos de Check List...`);
+    try {
+      const globalSystemInstruction = `Você é um Engenheiro de Suprimentos Sênior Especialista em Contratações da Construtora Afonso França.
+Sua missão é realizar a LEITURA INTEGRAL de todos os arquivos fornecidos (planilhas Excel, memoriais, arquivos de especificação e PDFs) e extrair TODAS as regras técnicas, premissas de contratação, critérios de medição, prazos, obrigações de segurança, logística de canteiro, penalidades e exigências da obra.
+
+CRÍTICO:
+1. Extraia o máximo de tópicos estruturados possíveis identificados no material fonte.
+2. Cada tópico deve ter título claro, regraObra com a especificação da construtora, pontoAtencao e perguntaFornecedor.
+3. Não retorne lista vazia se houver qualquer informação técnica, comercial, operacional ou de segurança nos documentos.
+${templateContext}`;
+
+      const globalPrompt = `Analise na íntegra todos os documentos de Check List da Obra anexados e extraia todas as regras, especificações técnicas, exigências de fornecimento, prazos, critérios de medição e penalidades estabelecidas pela construtora.`;
+
+      const globalContents = [
+        ...files,
+        { text: globalPrompt }
+      ];
+
+      const globalResp = await ai.models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: globalContents,
+        config: {
+          systemInstruction: globalSystemInstruction,
+          responseMimeType: 'application/json',
+          responseSchema: checklistBatchResponseSchema,
+          temperature: 0.2
+        }
+      });
+
+      const globalParsed = safeParseJsonFromAI(globalResp.text || '{}', {
+        tipoFornecimento: detectedTipoFornecimento,
+        topics: []
+      });
+
+      if (globalParsed.tipoFornecimento) {
+        detectedTipoFornecimento = globalParsed.tipoFornecimento;
+      }
+
+      if (Array.isArray(globalParsed.topics) && globalParsed.topics.length > 0) {
+        aggregatedTopics.push(...globalParsed.topics);
+        addLog('INFO', 'AI', `Varredura global profunda resgatou ${globalParsed.topics.length} tópicos com sucesso.`);
+      }
+    } catch (globalErr: any) {
+      addLog('WARN', 'AI', `Erro na varredura global profunda: ${globalErr.message}`);
     }
   }
 
@@ -423,7 +523,7 @@ const proposalResponseSchema = {
 };
 
 export async function analyzeProposal(
-  proposalFiles: { inlineData: { data: string; mimeType: string } }[],
+  proposalFiles: any[],
   checklistData: any,
   meetingId?: string
 ) {
@@ -639,19 +739,20 @@ ${transcript}
 const finalAtaResponseSchema = {
   type: Type.OBJECT,
   properties: {
-    resumo: { type: Type.STRING },
+    resumo: { type: Type.STRING, description: 'Resumo executivo completo e estruturado da reunião com quebras de linha e tópicos' },
     participantes: {
       type: Type.ARRAY,
+      description: 'Tabela de participantes presentes na reunião identificados na transcrição e abertura',
       items: {
         type: Type.OBJECT,
         properties: {
-          nome: { type: Type.STRING },
-          empresa: { type: Type.STRING },
-          cargoDepto: { type: Type.STRING },
-          email: { type: Type.STRING },
-          visto: { type: Type.STRING }
+          nome: { type: Type.STRING, description: 'Nome completo do participante' },
+          cargoDepto: { type: Type.STRING, description: 'Cargo, função ou departamento' },
+          empresa: { type: Type.STRING, description: 'Empresa representada (ex: Afonso França Engenharia ou Fornecedor)' },
+          email: { type: Type.STRING, description: 'E-mail corporativo do participante se citado na transcrição/proposta' },
+          visto: { type: Type.STRING, description: 'Visto ou presença' }
         },
-        required: ['nome']
+        required: ['nome', 'empresa']
       }
     },
     topicos: {
@@ -694,6 +795,60 @@ const finalAtaResponseSchema = {
   required: ['topicos']
 };
 
+// ==================== PARTICIPANT EXTRACTION & SANITIZATION ====================
+
+export function isInvalidPersonName(name: string): boolean {
+  if (!name || name.trim().length < 2) return true;
+  const clean = name.trim().toLowerCase();
+  const invalidPrefixes = [
+    'coordena', 'representante', 'comprador', 'diretor', 'diretoria',
+    'engenheiro', 'engenharia', 'gerente', 'gerência', 'fiscal', 'fiscalização',
+    'suprimento', 'analista', 'técnico', 'tecnico', 'gestor', 'equipe',
+    'setor', 'departamento', 'consultor', 'consultoria', 'comercial', 'área de', 'area de'
+  ];
+  return invalidPrefixes.some(pref => clean.startsWith(pref));
+}
+
+export function sanitizeParticipantesList(list: any[]): Participante[] {
+  const result: Participante[] = [];
+  const seen = new Set<string>();
+
+  for (const p of list) {
+    let nome = (p?.nome || '').trim();
+    let cargoDepto = (p?.cargoDepto || p?.cargo || '').trim();
+    let empresa = (p?.empresa || '').trim();
+    let email = (p?.email || '').trim();
+    let visto = (p?.visto || '').trim();
+
+    // Se o 'nome' for na verdade um cargo ou departamento (ex: "Coordenação de Engenharia...", "Representante Comercial...")
+    if (isInvalidPersonName(nome)) {
+      if (!cargoDepto) {
+        cargoDepto = nome;
+      }
+      nome = ''; // Limpa nome inválido para não poluir a coluna de pessoas físicas
+    }
+
+    // Se não tiver nome de pessoa física, nem cargo, nem empresa, ignora
+    if (!nome && !cargoDepto && !empresa && !email) {
+      continue;
+    }
+
+    const dedupeKey = normalizarTexto(`${nome || cargoDepto}-${empresa}`);
+    if (dedupeKey && !seen.has(dedupeKey)) {
+      seen.add(dedupeKey);
+      result.push({
+        nome,
+        cargoDepto,
+        empresa,
+        email,
+        visto
+      });
+    }
+  }
+
+  return result;
+}
+
 export async function generateFinalAta(
   abertura: any,
   checklistData: any,
@@ -716,11 +871,12 @@ export async function generateFinalAta(
     throw new Error('Nenhum template DOCX ativo disponível. Faça o upload do template oficial antes de redigir a Ata Final.');
   }
 
+  const prompts = await getStoredPrompts();
   const modelsConfig = await getStoredModelsConfig();
   const templateContext = buildTemplateContextPrompt(template);
 
   // Extrai textos padrão do template para preencher itens MANTIDO_PADRAO (PROMPT 05 / 06)
-  const templateBodyTable = template.tables?.[3] || template.tables?.find((t: any) => t.colCount === 4 && t.rowCount >= 3);
+  const templateBodyTable = encontrarTabelaCorpo(template.tables || []);
   const textosPadraoTemplate = templateBodyTable ? extrairTextosPadraoDoTemplate(templateBodyTable) : [];
 
   // Normalize checklist data and topics
@@ -760,13 +916,16 @@ export async function generateFinalAta(
   // PROMPT 07: Etapa 2 do pipeline de transcrição - Extração de Decisões Pro
   const decisionsPromptVersion = PROMPT_VERSIONS.decisions;
 
-  const systemInstruction = `Você é o Redator Técnico Oficial de Atas de Reunião de Suprimentos e Engenharia da Afonso França.
+  const systemInstruction = `Você é o Redator Técnico Oficial de Atas de Reunião de Suprimentos e Engenharia da Afonso França Engenharia.
 Sua missão é consolidar a Ata de Reunião Oficial Final no formato estruturado TopicoEstado[], cruzando obrigatoriamente:
 1. O Check List de Suprimentos da Obra;
-2. As Divergências da Proposta Comercial;
-3. Os Segmentos Filtrados de Deliberação da Reunião de Negociação.
+2. As Divergências da Proposta Comercial e Ressalvas Técnicas/Comerciais;
+3. As Cláusulas e Tabela do Template Oficial da Ata;
+4. A Transcrição Integral e Segmentos de Deliberação da Reunião.
 
 ${templateContext}
+
+${prompts?.finalAtaInstructions ? `DIRETRIZES PERSONALIZADAS DA ADMINISTRAÇÃO PARA ATA FINAL E PARTICIPANTES:\n${prompts.finalAtaInstructions}\n` : ''}
 
 DADOS DA CONTRATAÇÃO:
 - Obra: ${obraIdentificacao}
@@ -775,18 +934,44 @@ DADOS DA CONTRATAÇÃO:
 - Pacote / Serviço: ${abertura?.servico || 'Serviços de Engenharia'}
 - RM / Cotação: RM ${abertura?.rm || 'S/N'} • COT ${abertura?.cot || 'S/N'}
 
-REGRAS RÍGIDAS DE INTEGRIDADE E QUALIDADE (PROMPTS 06 & 07):
-1. NUNCA invente valores, prazos, participantes, itens ou grupos de informações não existentes na ata ou nos documentos fonte. Limite-se estritamente ao que foi discutido e documentado.
-2. Preencha adequadamente o template original em todos os campos contidos, garantindo o maior nível de completude do artefato.
-3. Quando forem encontradas pendências importantes para a contratação de serviços e equipamentos em construção civil, apresente-as de forma CLARA e EXPLÍCITA (marcando o item como PENDENTE).
-4. Cada tópico analisado deve ter sua situação classificada exatamente como:
-   - "ACORDADO": O item foi expressamente deliberado e acordado na reunião. É OBRIGATÓRIO fornecer "ancoraTranscricao" contendo citação literal ou trecho comprovatório da transcrição.
-   - "PENDENTE": O item possui ressalva, divergência ou documentação pendente de envio.
-   - "MANTIDO_PADRAO": O item do checklist/template não foi modificado na reunião e mantém o padrão da construtora.
-   - "ATUALIZADO": O item foi retificado conforme nova proposta técnica.
+REGRAS RÍGIDAS DE IDENTIFICAÇÃO DE PARTICIPANTES, PENDÊNCIAS E RESUMO EXECUTIVO (PROMPTS 06 & 07):
+1. IDENTIFICAÇÃO FORÇADA DE PARTICIPANTES DA REUNIÃO (OBRIGATÓRIO):
+   - Faça uma varredura COMPLETA e RIGOROSA na transcrição da reunião para identificar TODAS as pessoas físicas presentes (falas, apresentações, saudações, introduções, nomes de engenheiros, compradores, coordenadores da Afonso França Engenharia e representantes/diretores/técnicos do fornecedor).
+   - REGRAS MANDATÓRIAS PARA O CAMPO 'nome':
+     • O campo "nome" DEVE conter OBRIGATORIAMENTE o NOME e SOBRENOME de uma PESSOA FÍSICA REAL (ex: "Carlos Eduardo Silva", "Thais Louise Barroso", "Mariana Costa").
+     • NUNCA utilize termos como "Coordenação de Engenharia...", "Representante Comercial...", "Comprador", "Diretoria", "Gerente da Obra", "Fiscal", "Suprimentos", "Setor Técnico" no campo "nome". Esses termos NÃO são nomes de pessoas!
+     • Se alguém se apresentar como "Aqui é a Coordenação de Engenharia, Carlos falando", o "nome" é "Carlos", o "cargoDepto" é "Coordenação de Engenharia" e a "empresa" é "Afonso França Engenharia".
+     • Se na fala for citado apenas um cargo ou departamento sem NENHUM nome de pessoa física associado, NÃO crie um participante nominal.
+   - Para cada participante identificado, preencha:
+     • "nome": Nome completo da pessoa (ex: "Carlos Eduardo Silva", "Thais Louise Barroso")
+     • "cargoDepto": Cargo, função ou departamento (ex: "Engenheiro Coordenador", "Analista de Suprimentos", "Diretor Técnico", "Gerente Comercial")
+     • "empresa": Razão social / Nome da Empresa representada (ex: "Afonso França Engenharia", ou o nome do fornecedor "${fornecedorNome}")
+     • "email": E-mail corporativo (se citado na transcrição, cabeçalho ou proposta; se não constar, prever formato de e-mail corporativo ou deixar em branco)
+     • "visto": Visto ou indicação de presença (ex: "Presente" ou "")
+   - Mescle e consolide todos os participantes já previamente cadastrados na Abertura com os novos participantes extraídos da transcrição, garantindo que TODOS os interlocutores constem na tabela de participantes.
+
+2. IDENTIFICAÇÃO DE PENDÊNCIAS (OBRIGATÓRIO):
+   - Cruze atentamente as Divergências da Proposta Comercial com a transcrição da reunião. Se houver divergência não sanada ou condicionada a envio posterior de nova proposta/documentação/memória de cálculo pelo fornecedor, classifique obrigatoriamente o tópico como "PENDENTE" e cadastre uma entrada em "itensDeAcao" com responsável e prazo.
+   - Verifique requisitos do Checklist e do Template de Obra que exigem documentos prévios (ex: ART/RRT, PCMSO/PGR/LTCAT, Comprovante de EPI com CA, Certidões Negativas, Cronograma Detalhado, Amostras para Aprovação, Carta de Fiança/Garantia). Havendo pendência de entrega ou aprovação, registre como "PENDENTE".
+   - Todo item com ressalva, pendência de documentação, prazo de regularização ou aprovação futura DEVE ter situação "PENDENTE".
+
+3. ESTRUTURAÇÃO DO RESUMO EXECUTIVO (CAMPO 'resumo'):
+   - O Resumo Executivo deve ser completo, formal, fidedigno e perfeitamente legível com quebras de linha e seções claras.
+   - Formate o texto com seções temáticas indentadas:
+     • 1. OBJETO E ESCOPO: Descrição da contratação para a obra ${obraIdentificacao}, fornecedor ${fornecedorNome} e pacote ${abertura?.servico || 'especificado'}.
+     • 2. CONDIÇÕES COMERCIAIS E FATURAMENTO: Síntese dos valores negociados, retenção de garantia, medições e condições de pagamento aprovadas.
+     • 3. CRONOGRAMA E MOBILIZAÇÃO: Datas de início, prazos de execução, marcos críticos e liberação de frentes de serviço.
+     • 4. SEGURANÇA DO TRABALHO E DOCUMENTAÇÃO (SST): Exigências mandatórias para integração da equipe e início dos serviços.
+     • 5. ENCAMINHAMENTOS E PENDÊNCIAS CRÍTICAS: Síntese das entregas pendentes com prazos limites fixados na reunião.
+
+4. CLASSIFICAÇÃO DE CADA TÓPICO:
+   - "ACORDADO": O item foi expressamente deliberado e aceito pelas partes na reunião. É OBRIGATÓRIO fornecer "ancoraTranscricao" contendo citação literal ou trecho comprovatório da transcrição.
+   - "PENDENTE": O item possui ressalva técnica/comercial, divergência da proposta ou documentação pendente de envio pelo fornecedor ou aprovação pela engenharia.
+   - "MANTIDO_PADRAO": O item do checklist/template não sofreu alteração e mantém a regra corporativa da Afonso França.
+   - "ATUALIZADO": O item foi retificado e atualizado conforme alinhamento em reunião.
    - "NAO_APLICAVEL": O item não se aplica ao escopo contratado.
-3. Se um tópico for marcado como ACORDADO sem âncora literal na transcrição, o validador de código irá rebaixá-lo automaticamente para PENDENTE.
-4. Campos em aberto ou ausentes devem conter o marcador [A DEFINIR NA REUNIÃO] ou [A DEFINIR].`;
+
+5. NUNCA invente dados fictícios. Se um dado ou prazo não foi definido na reunião, indique expressamente [A DEFINIR NA REUNIÃO] ou [A DEFINIR].`;
 
   const promptText = `Consolide a Ata Final oficial da reunião.
 
@@ -806,7 +991,11 @@ ${normalizedDivergences.length > 0 ? JSON.stringify(normalizedDivergences, null,
 
 === SEGMENTOS DE DELIBERAÇÃO DA TRANSCRIÇÃO (FILTRADOS) ===
 ${deliberacoesTrechos || transcript}
-===========================================================`;
+===========================================================
+
+=== TRANSCRIÇÃO COMPLETA DA REUNIÃO (FONTE DE PARTICIPANTES E INTRODUÇÕES) ===
+${transcript}
+=============================================================================`;
 
   const modelName = modelsConfig.finalAtaModel || 'gemini-2.5-pro';
   const temperature = modelsConfig.finalAtaParams?.temperature ?? 0.2;
@@ -884,13 +1073,16 @@ ${deliberacoesTrechos || transcript}
   });
 
   // PROMPT 06 d: Tópico aplicável do checklist ausente na resposta => MANTIDO_PADRAO com o texto padrão do template, nunca inventado
+  const existingTitles = new Set(parsedTopicos.map(pt => normalizarTexto(pt.titulo)));
+  
   if (topics.length > 0) {
-    const existingTitles = new Set(parsedTopicos.map(pt => normalizarTexto(pt.titulo)));
     topics.forEach((ckTopic: any, idx: number) => {
       const ckTitle = ckTopic.title || ckTopic.titulo || `Regra ${idx + 1}`;
       if (!existingTitles.has(normalizarTexto(ckTitle))) {
         // Busca texto padrão extraído do template correspondente ou da regra da obra
-        const defaultTemplateRow = textosPadraoTemplate[idx] || null;
+        const defaultTemplateRow =
+          textosPadraoTemplate.find(tp => normalizarTexto(tp.titulo || '') === normalizarTexto(ckTitle))
+          || textosPadraoTemplate[idx] || null;
         const textoDescricaoPadrao = defaultTemplateRow?.descricao || ckTopic.regraObra || '[A DEFINIR NA REUNIÃO]';
 
         parsedTopicos.push({
@@ -903,6 +1095,27 @@ ${deliberacoesTrechos || transcript}
           responsavel: null,
           prazo: null
         });
+        existingTitles.add(normalizarTexto(ckTitle));
+      }
+    });
+  }
+
+  // FORCE INJECTION: Garante a injeção integral da matriz de textos padrão do modelo DOCX original, independentemente de terem sido mapeadas como tópicos na Pré-Ata
+  if (textosPadraoTemplate.length > 0) {
+    textosPadraoTemplate.forEach((tp: any, idx: number) => {
+      const title = tp.titulo || `Regra Template ${idx + 1}`;
+      if (title.trim() && !existingTitles.has(normalizarTexto(title))) {
+        parsedTopicos.push({
+          topicoId: `tpl-topic-${idx + 1}`,
+          titulo: title,
+          situacao: 'MANTIDO_PADRAO',
+          textoAta: tp.descricao || '[A DEFINIR NA REUNIÃO]',
+          camposADefinir: ['[A DEFINIR NA REUNIÃO]'],
+          origens: [{ doc: 'MODELO', ref: 'Template Oficial', citacao: 'Texto Padrão da Tabela de Corpo' }],
+          responsavel: null,
+          prazo: null
+        });
+        existingTitles.add(normalizarTexto(title));
       }
     });
   }
@@ -927,24 +1140,22 @@ ${deliberacoesTrechos || transcript}
     });
   }
 
-  // Participantes consolidados
-  const finalParticipantes: Participante[] = Array.isArray(parsed.participantes) && parsed.participantes.length > 0
-    ? parsed.participantes.map((p: any) => ({
-        nome: p.nome || '',
-        empresa: p.empresa || '',
-        cargoDepto: p.cargoDepto || '',
-        email: p.email || '',
-        visto: p.visto || ''
-      }))
-    : (Array.isArray(abertura?.participantes) && abertura.participantes.length > 0
-        ? abertura.participantes.map((p: any) => ({
-            nome: p.nome || '',
-            empresa: p.empresa || '',
-            cargoDepto: p.cargoDepto || '',
-            email: p.email || '',
-            visto: p.visto || ''
-          }))
-        : []);
+  // Participantes consolidados (mesclando os já cadastrados na Abertura com os identificados na transcrição pela IA)
+  const rawParticipantesList: any[] = [];
+
+  if (Array.isArray(abertura?.participantes)) {
+    abertura.participantes.forEach((p: any) => {
+      rawParticipantesList.push(p);
+    });
+  }
+
+  if (Array.isArray(parsed.participantes)) {
+    parsed.participantes.forEach((p: any) => {
+      rawParticipantesList.push(p);
+    });
+  }
+
+  const finalParticipantes: Participante[] = sanitizeParticipantesList(rawParticipantesList);
 
   // Divergências da proposta
   const finalDivergencias: Divergencia[] = normalizedDivergences.map((d: any, idx: number) => ({
@@ -1003,17 +1214,33 @@ ${deliberacoesTrechos || transcript}
       blocos: t.blocos
     }));
 
-  const pendingItems = topicosValidados
-    .filter(t => t.situacao === 'PENDENTE')
-    .map((t, idx) => ({
-      item: String(idx + 1).padStart(2, '0'),
-      num: String(idx + 1).padStart(2, '0'),
-      titulo: t.titulo,
-      descricao: t.textoAta,
-      responsavel: t.responsavel,
-      prazo: t.prazo,
-      blocos: t.blocos
-    }));
+  const pendingItems: any[] = [
+    ...topicosValidados
+      .filter(t => t.situacao === 'PENDENTE')
+      .map(t => ({
+        titulo: t.titulo,
+        descricao: t.textoAta,
+        responsavel: t.responsavel,
+        prazo: t.prazo,
+        blocos: t.blocos
+      })),
+    ...finalItensAcao.map(it => ({
+      titulo: 'Item de Ação',
+      descricao: it.descricao,
+      responsavel: it.responsavel,
+      prazo: it.prazo
+    })),
+    ...finalDivergencias.map(d => ({
+      titulo: `Divergência [${d.severidade}]`,
+      descricao: `${d.descricao} (Regra: ${d.regraChecklist} | Proposta: ${d.propostaFornecedor})`,
+      responsavel: 'A Definir',
+      prazo: 'A Definir'
+    }))
+  ].map((it, idx) => ({
+    ...it,
+    item: String(idx + 1).padStart(2, '0'),
+    num: String(idx + 1).padStart(2, '0')
+  }));
 
   if (meetingId) {
     setAnalysisProgress(meetingId, {
@@ -1062,25 +1289,72 @@ const metadataResponseSchema = {
         local: { type: Type.STRING },
         linkReuniao: { type: Type.STRING },
         folha: { type: Type.STRING },
-        resumoExecutivo: { type: Type.STRING }
+        resumoExecutivo: { type: Type.STRING },
+        valoresComerciais: {
+          type: Type.OBJECT,
+          properties: {
+            valorTotal: { type: Type.STRING },
+            valorServicos: { type: Type.STRING },
+            valorIndustrializacao: { type: Type.STRING },
+            valorVendaMercantil: { type: Type.STRING },
+            valorLocacao: { type: Type.STRING },
+            valorFretes: { type: Type.STRING },
+            valorGerenciamento: { type: Type.STRING },
+            valorFaturamentoDireto: { type: Type.STRING },
+            sinalMobilizacao: { type: Type.STRING },
+            condicaoPagamento: { type: Type.STRING },
+            retencaoGarantia: { type: Type.STRING },
+            riscoSacado: { type: Type.STRING },
+            reajuste: { type: Type.STRING }
+          }
+        },
+        prazosCronograma: {
+          type: Type.OBJECT,
+          properties: {
+            mobilizacao: { type: Type.STRING },
+            elaboracaoProjeto: { type: Type.STRING },
+            aprovacaoProjeto: { type: Type.STRING },
+            entregaMaterial: { type: Type.STRING },
+            medidasDefinitivas: { type: Type.STRING },
+            fabricacao: { type: Type.STRING },
+            execucao: { type: Type.STRING },
+            comissionamento: { type: Type.STRING },
+            operacaoAssistida: { type: Type.STRING }
+          }
+        },
+        participantes: {
+          type: Type.ARRAY,
+          items: {
+            type: Type.OBJECT,
+            properties: {
+              nome: { type: Type.STRING },
+              cargoDepto: { type: Type.STRING },
+              empresa: { type: Type.STRING },
+              email: { type: Type.STRING },
+              visto: { type: Type.STRING }
+            }
+          }
+        }
       }
     }
   },
   required: ['metadata']
 };
 
-export async function extractDocumentMetadata(files: { inlineData: { data: string; mimeType: string } }[]) {
+export async function extractDocumentMetadata(files: any[]) {
   const template = await getActiveTemplateFromDb();
   const templateContext = template ? buildTemplateContextPrompt(template) : '';
   const promptVersion = PROMPT_VERSIONS.metadata;
 
-  const systemInstruction = `Você é um extrator de metadados contratuais e de engenharia de documentos de obras da Afonso França Engenharia.
-Sua missão é inspecionar os arquivos fornecidos e extrair todos os metadados cadastrais, comerciais e de participantes de acordo com a estrutura do template oficial:
-- obraCodigo: Código identificador ou número da obra (formato numérico ou alfanumérico).
-- obraNome: Nome oficial do empreendimento, projeto ou condomínio.
+  const systemInstruction = `Você é um Engenheiro de Suprimentos Sênior e Extrator Técnico Contratual da Afonso França Engenharia.
+Sua missão é inspecionar minuciosamente os arquivos fornecidos (documentos complementares, propostas comerciais, transcrições e planilhas) e extrair com MÁXIMA FIDELIDADE e PRECISÃO todos os metadados verídicos, comerciais, cronogramas, participantes e um resumo executivo bem estruturado e indentado.
+
+ESTRUTURA DE EXTRAÇÃO:
+- obraCodigo: Código identificador ou número da obra (ex: 0048, 0590).
+- obraNome: Nome oficial do empreendimento ou projeto.
 - fornecedor: Razão social ou nome fantasia da empresa fornecedora/contratada.
 - assunto: Tema ou objeto da reunião e contratação.
-- servico: Descrição do pacote ou escopo contratado.
+- servico: Descrição detalhada do pacote ou escopo contratado.
 - rm: Número da Requisição de Materiais/Serviços (RM).
 - cot: Número da Cotação/Proposta Comercial (COT).
 - ataNumero: Número sequencial da ata.
@@ -1089,19 +1363,51 @@ Sua missão é inspecionar os arquivos fornecidos e extrair todos os metadados c
 - local: Local físico ou plataforma de videoconferência.
 - linkReuniao: Link da sala virtual de reunião.
 - folha: Número da folha.
-- participantes: Lista de participantes com nome, cargo, empresa, email e visto.
-- valoresComerciais: Objeto com valores monetários discriminados (total, serviços, etc.).
-- prazosCronograma: Objeto com prazos de mobilização, projeto, execução, entrega e comissionamento.
-- resumoExecutivo: Resumo geral da contratação e dos alinhamentos.
+- resumoExecutivo: Resumo executivo organizado, com parágrafos claros, tópicos indentados e marcadores executivos (• ou subitens) consolidando:
+  * Objeto e Escopo Principal da Contratação
+  * Resumo dos Valores e Condição Comercial Negociada
+  * Prazos Críticos, Mobilização e Cronograma
+  * Diretrizes Mandatórias de Segurança do Trabalho (SST/NRs) e Logística de Canteiro
+  * Próximos Passos e Responsabilidades Imediatas
+- valoresComerciais: Extrair valores monetários e condições REAIS encontrados nos documentos:
+  * valorTotal: Valor global total negociado com moeda (ex: R$ 1.500.000,00)
+  * valorServicos: Parcela correspondente a serviços
+  * valorIndustrializacao: Parcela de industrialização
+  * valorVendaMercantil: Parcela de materiais/venda mercantil
+  * valorLocacao: Parcela de locação de equipamentos
+  * valorFretes: Custos de frete/transporte
+  * valorGerenciamento: Custos de gerenciamento/projetos
+  * valorFaturamentoDireto: Condições de faturamento direto se houver
+  * sinalMobilizacao: Condição de adiantamento/sinal de mobilização
+  * condicaoPagamento: Prazos e percentuais de desembolso (ex: 30 dias fora a quinzena, medição mensal até dia 25)
+  * retencaoGarantia: Percentual e prazo de liberação de retenção contratual (ex: 5% por 180 dias)
+  * riscoSacado: Prazos e taxas de antecipação bancária/risco sacado
+  * reajuste: Regra de reajuste de preços (ex: Fixo e irreajustável por 12 meses)
+- prazosCronograma: Extrair prazos REAIS encontrados nos documentos e transcrições:
+  * mobilizacao: Prazo ou data para início de mobilização de equipe e canteiro
+  * elaboracaoProjeto: Prazo para elaboração dos projetos executivos
+  * aprovacaoProjeto: Prazo para análise e aprovação técnica pela construtora
+  * entregaMaterial: Prazo de fornecimento de insumos e matérias-primas
+  * medidasDefinitivas: Prazo para confirmação de medidas in loco
+  * fabricacao: Prazo de produção/fabricação
+  * execucao: Duração estimada para execução dos serviços
+  * comissionamento: Prazos de testes e comissionamento
+  * operacaoAssistida: Período de suporte/operação assistida
+- participantes: Lista dos participantes reais identificados nos documentos e transcrição com nome, cargo/depto, empresa, email e visto.
 
-CRÍTICO: Nunca preencha resultados com 'null'. Se não encontrar a informação, preencha com string vazia "".
+CRÍTICO:
+1. NUNCA utilize placeholders genéricos ou fictícios (como "xx dias", "R$ X", "Empresa ABC") se houver dados reais nos documentos.
+2. Se uma informação específica não constar nos arquivos analisados, preencha o campo com string vazia "" ou deixe sem valor, nunca inventando dados inexistentes.
 ${templateContext}`;
 
-  const promptText = `Extraia todos os metadados de obra, fornecedor, serviço e cotação encontrados nos documentos.`;
+  const modelsConfig = await getStoredModelsConfig();
+  const modelName = modelsConfig.proposalModel || 'gemini-2.5-flash';
+
+  const promptText = `Analise todos os documentos e transcrições fornecidos e extraia os metadados cadastrais, valores comerciais reais discriminados, cronograma de prazos, participantes e o resumo executivo estruturado e indentado.`;
 
   try {
     const response = await ai.models.generateContent({
-      model: 'gemini-2.5-flash',
+      model: modelName,
       contents: [...files, { text: promptText }],
       config: {
         systemInstruction,
@@ -1112,13 +1418,52 @@ ${templateContext}`;
     });
 
     const parsed = safeParseJsonFromAI(response.text || '{}', { metadata: {} });
+    const metadataResult = (parsed.metadata && typeof parsed.metadata === 'object' && Object.keys(parsed.metadata).length > 0)
+      ? parsed.metadata
+      : parsed;
+
+    // Sanitiza participantes extraídos dos metadados
+    if (metadataResult && Array.isArray((metadataResult as any).participantes)) {
+      (metadataResult as any).participantes = sanitizeParticipantesList((metadataResult as any).participantes);
+    }
+
     addLog('INFO', 'AI', `[promptVersion: ${promptVersion}] Extração de metadados cadastrais concluída`, {
       promptVersion,
-      model: 'gemini-2.5-flash'
+      model: modelName
     });
-    return parsed;
+    return { metadata: metadataResult };
   } catch (err: any) {
-    addLog('WARN', 'AI', `[promptVersion: ${promptVersion}] Erro ao extrair metadados automáticos: ${err.message}`);
+    addLog('WARN', 'AI', `[promptVersion: ${promptVersion}] Erro ao extrair metadados automáticos: ${err.message}. Tentando fallback em texto...`);
+    
+    // Fallback: Se falhar em multimodal, tenta passar apenas o texto disponível
+    try {
+      const textParts = files
+        .map(f => f.text || '')
+        .filter(t => t && t.trim().length > 0)
+        .join('\n\n---\n\n');
+
+      if (textParts) {
+        const response = await ai.models.generateContent({
+          model: 'gemini-2.5-flash',
+          contents: [{ text: `${textParts}\n\n${promptText}` }],
+          config: {
+            systemInstruction,
+            responseMimeType: 'application/json',
+            responseSchema: metadataResponseSchema,
+            temperature: 0.2
+          }
+        });
+        const parsedFallback = safeParseJsonFromAI(response.text || '{}', { metadata: {} });
+        const metaFallback = (parsedFallback.metadata && typeof parsedFallback.metadata === 'object') ? parsedFallback.metadata : parsedFallback;
+        if (metaFallback && Array.isArray((metaFallback as any).participantes)) {
+          (metaFallback as any).participantes = sanitizeParticipantesList((metaFallback as any).participantes);
+        }
+        return { metadata: metaFallback };
+      }
+    } catch (fallbackErr: any) {
+      addLog('ERROR', 'AI', `Fallback de metadados também falhou: ${fallbackErr.message}`);
+    }
+
     return { metadata: {} };
   }
 }

@@ -372,7 +372,7 @@ test('Regression Suite - Template Parsing e Pipeline de Render DOCX', async (t) 
     assert.ok(!bulletFallback.includes('<w:numId'), 'Não deve gerar w:numId no fallback');
     assert.ok(bulletFallback.includes('• '), 'Deve conter caractere de bullet "• " no fallback');
 
-    // d) extrairTextosPadraoDoTemplate limpa resíduos
+    // d) extrairTextosPadraoDoTemplate extrai itens e detecta variáveis de exemplo
     const mockTabelaCorpo = {
       index: 3,
       rowCount: 3,
@@ -386,9 +386,8 @@ test('Regression Suite - Template Parsing e Pipeline de Render DOCX', async (t) 
     const extraidos = extrairTextosPadraoDoTemplate(mockTabelaCorpo);
     assert.strictEqual(extraidos.length, 2, 'Deve extrair 2 itens padrão');
     for (const item of extraidos) {
-      assert.ok(!item.descricao.includes('[xx]'), 'Descrição não deve conter [xx]');
-      assert.ok(!item.descricao.includes('R$ XXXX'), 'Descrição não deve conter R$ XXXX');
-      assert.ok(item.descricao.includes('[A DEFINIR NA REUNIÃO]'), 'Resíduos devem ser substituídos por [A DEFINIR NA REUNIÃO]');
+      assert.ok(item.variaveisExemplo.length > 0, 'Deve mapear variáveis de exemplo');
+      assert.ok(item.variaveisExemplo.some(v => v.tipo === 'placeholder'), 'Deve identificar variáveis do tipo placeholder');
     }
 
     // e) extrairBulletNumId detecta numId válido se existir no XML

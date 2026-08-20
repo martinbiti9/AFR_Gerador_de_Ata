@@ -64,9 +64,12 @@ export function Step2Checklist({ state, updateState, onMetadataDetected }: Props
     setProgressInfo({ message: 'Iniciando análise do Check List em lotes...', progressPercent: 5 });
     
     const meetingId = state.meetingId || `analysis-${Date.now()}`;
-    const formData = new FormData();
-    files.forEach(f => formData.append('files', f));
-    formData.append('meetingId', meetingId);
+    const checklistFormData = new FormData();
+    files.forEach(f => checklistFormData.append('files', f));
+    checklistFormData.append('meetingId', meetingId);
+
+    const metaFormData = new FormData();
+    files.forEach(f => metaFormData.append('files', f));
 
     // Polling incremental de progresso
     const pollTimer = setInterval(async () => {
@@ -90,12 +93,12 @@ export function Step2Checklist({ state, updateState, onMetadataDetected }: Props
       const [result, metaJson] = await Promise.all([
         safeFetchJson<AnalysisResult>('/api/analyze-checklist', {
           method: 'POST',
-          body: formData
+          body: checklistFormData
         }),
         // Also extract metadata if abertura is missing or user jumped straight to checklist
         safeFetchJson<{ metadata?: Partial<AberturaData> }>('/api/extract-metadata', {
           method: 'POST',
-          body: formData
+          body: metaFormData
         }).catch(() => null)
       ]);
       
@@ -165,6 +168,72 @@ export function Step2Checklist({ state, updateState, onMetadataDetected }: Props
       }
     });
     setEditingCard(newId);
+  };
+
+  const loadDefaultStandardTopics = () => {
+    const defaultTaxonomy: TopicCard[] = [
+      {
+        id: 'topic-1',
+        title: 'Escopo e Especificações Técnicas dos Serviços',
+        regraObra: 'Execução estrita conforme projetos executivos e memoriais da Construtora.',
+        excecaoAdmitida: 'N/A',
+        pontoAtencao: 'Verificar interferências e compatibilização em campo antes do início.',
+        perguntaFornecedor: 'Foram identificadas divergências entre projeto e memorial?',
+        source: 'Padrão Engenharia'
+      },
+      {
+        id: 'topic-2',
+        title: 'Critério de Medição e Pagamento',
+        regraObra: 'Medição mensal dos serviços efetivamente executados e aprovados pela fiscalização.',
+        excecaoAdmitida: 'N/A',
+        pontoAtencao: 'Faturamento condicionado à apresentação das guias trabalhistas e ART quitada.',
+        perguntaFornecedor: 'Concordam com o fechamento de medição até o dia 25 de cada mês?',
+        source: 'Padrão Engenharia'
+      },
+      {
+        id: 'topic-3',
+        title: 'Segurança do Trabalho e EPIs',
+        regraObra: 'Atendimento integral à NR-18 e NR-35 com fornecimento de EPIs e integração prévia.',
+        excecaoAdmitida: 'N/A',
+        pontoAtencao: 'Tolerância zero para trabalho em altura sem linha de vida e trava-quedas.',
+        perguntaFornecedor: 'Equipe possui treinamento NR-35 e exames ASO atualizados?',
+        source: 'Padrão Engenharia'
+      },
+      {
+        id: 'topic-4',
+        title: 'Logística de Canteiro, Carga e Descarga',
+        regraObra: 'Descarga e estocagem em local indicado pela obra nos horários autorizados.',
+        excecaoAdmitida: 'N/A',
+        pontoAtencao: 'Agendamento prévio com 48h de antecedência com o setor de logística.',
+        perguntaFornecedor: 'Entregas serão realizadas com caminhão munck próprio?',
+        source: 'Padrão Engenharia'
+      },
+      {
+        id: 'topic-5',
+        title: 'Retenções Contratuais e Garantias',
+        regraObra: 'Retenção técnica de 5% sobre as faturas para garantia do período de testes/desmobilização.',
+        excecaoAdmitida: 'Substituição por Carta de Fiança Bancária ou Seguro Garantia.',
+        pontoAtencao: 'Liberação após emissão do Termo de Recebimento Provisório.',
+        perguntaFornecedor: 'Optam por retenção contratual ou emissão de apólice de seguro garantia?',
+        source: 'Padrão Engenharia'
+      },
+      {
+        id: 'topic-6',
+        title: 'Penalidades e Multas por Atraso',
+        regraObra: 'Multa de 0,5% por dia de atraso sobre o valor contratual até o limite de 10%.',
+        excecaoAdmitida: 'N/A',
+        pontoAtencao: 'Atrasos injustificados impactarão no índice de qualificação de fornecedores.',
+        perguntaFornecedor: 'Cronograma proposto atende integralmente os marcos contratuais da obra?',
+        source: 'Padrão Engenharia'
+      }
+    ];
+
+    updateState({
+      analysisResult: {
+        tipoFornecimento: state.analysisResult?.tipoFornecimento || 'Subempreitada de Serviços e Materiais',
+        topics: defaultTaxonomy
+      }
+    });
   };
 
   const topics = state.analysisResult?.topics || [];
@@ -330,7 +399,15 @@ export function Step2Checklist({ state, updateState, onMetadataDetected }: Props
                   Os arquivos enviados não continham regras mapeáveis ou houve uma leitura parcial. Você pode adicionar premissas manualmente ou reanalisar os arquivos com instruções específicas.
                 </p>
               </div>
-              <div className="flex items-center justify-center gap-3 pt-2">
+              <div className="flex flex-wrap items-center justify-center gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={loadDefaultStandardTopics}
+                  className="flex items-center gap-1.5 px-4 py-2 bg-emerald-600 text-white rounded-lg text-xs font-bold shadow-sm hover:bg-emerald-700 transition-colors"
+                >
+                  <Sparkles size={14} />
+                  Carregar Tópicos Padrão da Construtora
+                </button>
                 <button
                   type="button"
                   onClick={addTopic}

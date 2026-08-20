@@ -24,6 +24,9 @@ export interface MeetingEntity {
   ownerUid: string;
   ownerEmail: string;
   ownerName: string;
+  sharedWith?: string[];
+  isPublicShare?: boolean;
+  shareToken?: string;
   createdAt: string;
   updatedAt: string;
 }
@@ -291,21 +294,23 @@ export async function saveMeetingToStore(
  */
 export async function getMeetingsFromStore(
   searchTerm?: string,
-  user?: { uid: string; role: 'member' | 'admin' }
+  user?: { uid: string; email?: string; role: 'member' | 'admin' }
 ): Promise<MeetingEntity[]> {
   const db = getFirestoreDb();
   let list: MeetingEntity[] = [];
 
   if (db) {
     try {
-      let query: FirebaseFirestore.Query = db.collection('meetings');
-
-      if (user && user.role === 'member') {
-        query = query.where('ownerUid', '==', user.uid);
-      }
-
-      const snap = await query.get();
+      const snap = await db.collection('meetings').get();
       list = snap.docs.map(doc => doc.data() as MeetingEntity);
+      
+      if (user && user.role === 'member') {
+        list = list.filter(m => 
+          m.ownerUid === user.uid ||
+          (user.email && m.sharedWith?.includes(user.email.toLowerCase())) ||
+          m.isPublicShare
+        );
+      }
     } catch (err: any) {
       console.warn('Aviso ao consultar Firestore em getMeetingsFromStore:', err.message);
     }
@@ -315,7 +320,11 @@ export async function getMeetingsFromStore(
   if (list.length === 0 && memoryMeetingsStore.size > 0) {
     list = Array.from(memoryMeetingsStore.values());
     if (user && user.role === 'member') {
-      list = list.filter(m => m.ownerUid === user.uid);
+      list = list.filter(m => 
+        m.ownerUid === user.uid ||
+        (user.email && m.sharedWith?.includes(user.email.toLowerCase())) ||
+        m.isPublicShare
+      );
     }
   }
 
@@ -337,11 +346,11 @@ export async function getMeetingsFromStore(
 }
 
 /**
- * Busca uma reunião pelo ID no Firestore ou disco com checagem de propriedade para membros.
+ * Busca uma reunião pelo ID no Firestore ou disco com checagem de propriedade ou compartilhamento para membros.
  */
 export async function getMeetingById(
   id: string,
-  user?: { uid: string; role: 'member' | 'admin' }
+  user?: { uid: string; email?: string; role: 'member' | 'admin' }
 ): Promise<MeetingEntity | null> {
   const db = getFirestoreDb();
   let meeting: MeetingEntity | null = null;
@@ -365,12 +374,100 @@ export async function getMeetingById(
     return null;
   }
 
-  // Membro comum só pode visualizar suas próprias reuniões
-  if (user && user.role === 'member' && meeting.ownerUid !== user.uid) {
-    return null;
+  // Membro comum pode visualizar se for proprietário, se tiver sido compartilhado com ele ou se for público
+  if (user && user.role === 'member') {
+    const isOwner = meeting.ownerUid === user.uid;
+    const isSharedWithUser = Boolean(user.email && meeting.sharedWith?.includes(user.email.toLowerCase()));
+    const isPublic = Boolean(meeting.isPublicShare);
+
+    if (!isOwner && !isSharedWithUser && !isPublic) {
+      return null;
+    }
   }
 
   return meeting;
+}
+
+/**
+ * Compartilha reunião com outro usuário ou gera token público de acesso
+ */
+export async function shareMeetingInStore(
+  id: string,
+  options: { shareWithEmail?: string; isPublic?: boolean },
+  user: { uid: string; email: string; role: 'member' | 'admin' }
+): Promise<{ success: boolean; meeting: MeetingEntity; shareUrl?: string }> {
+  const meeting = await getMeetingById(id, user);
+  if (!meeting) {
+    throw new Error('Reunião não encontrada ou você não tem permissão para compartilhá-la.');
+  }
+
+  if (user.role !== 'admin' && meeting.ownerUid !== user.uid) {
+    throw new Error('Apenas o proprietário da reunião ou administrador pode alterar permissões de compartilhamento.');
+  }
+
+  const updatedSharedWith = new Set<string>(meeting.sharedWith || []);
+  if (options.shareWithEmail && options.shareWithEmail.trim()) {
+    updatedSharedWith.add(options.shareWithEmail.toLowerCase().trim());
+  }
+
+  if (!meeting.shareToken) {
+    meeting.shareToken = `share-${id}-${Math.random().toString(36).substring(2, 10)}`;
+  }
+
+  meeting.sharedWith = Array.from(updatedSharedWith);
+  if (options.isPublic !== undefined) {
+    meeting.isPublicShare = options.isPublic;
+  }
+  meeting.updatedAt = new Date().toISOString();
+
+  const db = getFirestoreDb();
+  if (db) {
+    try {
+      await db.collection('meetings').doc(id).set(meeting, { merge: true });
+    } catch (err: any) {
+      console.warn(`Aviso ao atualizar compartilhamento no Firestore:`, err.message);
+    }
+  }
+
+  memoryMeetingsStore.set(id, meeting);
+  saveDiskMeetings();
+
+  addLog('INFO', 'SYSTEM', `Reunião ${id} compartilhada: public=${meeting.isPublicShare}, emails=${meeting.sharedWith.join(',')}`, {
+    meetingId: id,
+    sharedBy: user.email
+  });
+
+  return {
+    success: true,
+    meeting,
+    shareUrl: `/shared/${meeting.shareToken}`
+  };
+}
+
+/**
+ * Busca reunião por token de compartilhamento público
+ */
+export async function getMeetingByShareToken(token: string): Promise<MeetingEntity | null> {
+  if (!token) return null;
+  const db = getFirestoreDb();
+  if (db) {
+    try {
+      const snap = await db.collection('meetings').where('shareToken', '==', token).limit(1).get();
+      if (!snap.empty) {
+        return snap.docs[0].data() as MeetingEntity;
+      }
+    } catch (err: any) {
+      console.warn('Aviso ao buscar por shareToken no Firestore:', err.message);
+    }
+  }
+
+  for (const m of memoryMeetingsStore.values()) {
+    if (m.shareToken === token) {
+      return m;
+    }
+  }
+
+  return null;
 }
 
 /**

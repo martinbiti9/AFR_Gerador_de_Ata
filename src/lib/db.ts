@@ -157,6 +157,24 @@ export const deleteMeeting = async (id: string): Promise<void> => {
   }
 };
 
+/**
+ * Compartilha a reunião com colegas de trabalho ou ativa link público.
+ */
+export const shareMeeting = async (
+  id: string, 
+  options: { shareWithEmail?: string; isPublic?: boolean }
+): Promise<{ success: boolean; meeting: any; shareUrl?: string }> => {
+  try {
+    return await safeFetchJson<{ success: boolean; meeting: any; shareUrl?: string }>(`/api/meetings/${id}/share`, {
+      method: 'POST',
+      body: JSON.stringify(options)
+    });
+  } catch (err: any) {
+    console.error('Erro ao compartilhar reunião:', err);
+    throw err;
+  }
+};
+
 // ================= AUDIT LOGS PERSISTENCE VIA API =================
 
 export const saveAuditLogInFirestore = async (entry: AuditLog): Promise<void> => {

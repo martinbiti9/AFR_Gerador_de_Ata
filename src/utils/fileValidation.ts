@@ -15,7 +15,17 @@ export const ALLOWED_EXTENSIONS = [
   '.xlsx',
   '.csv',
   '.txt',
-  '.md'
+  '.md',
+  '.mp3',
+  '.wav',
+  '.m4a',
+  '.aac',
+  '.ogg',
+  '.webm',
+  '.mp4',
+  '.png',
+  '.jpg',
+  '.jpeg'
 ];
 
 export const ALLOWED_TEMPLATE_EXTENSIONS = ['.docx'];

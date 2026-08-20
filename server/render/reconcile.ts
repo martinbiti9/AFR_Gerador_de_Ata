@@ -82,7 +82,7 @@ export function reconcilePayload(
     departamento: p.cargoDepto || '',
     empresa: p.empresa || '',
     email: p.email || '',
-    empresaEmail: p.empresaEmail || `${p.empresa ? `${p.empresa} / ` : ''}${p.email || ''}`.trim(),
+    empresaEmail: p.empresaEmail || `${p.empresa ? `${p.empresa}` : ''}${p.cargoDepto ? ` (${p.cargoDepto})` : ''}${p.email ? ` - ${p.email}` : ''}`.trim() || `${p.empresa || ''} ${p.email || ''}`.trim(),
     visto: p.visto || ''
   }));
 
@@ -472,8 +472,24 @@ export function reconcilePayload(
     RESUMO: resumoTexto || null,
     resumoExecutivo: resumoTexto || null,
     RESUMO_EXECUTIVO: resumoTexto || null,
+    resumo_executivo: resumoTexto || null,
+    resumoReuniao: resumoTexto || null,
+    RESUMO_REUNIAO: resumoTexto || null,
+    resumo_reuniao: resumoTexto || null,
+    resumoDaReuniao: resumoTexto || null,
+    RESUMO_DA_REUNIAO: resumoTexto || null,
+    sintese: resumoTexto || null,
+    SINTESE: resumoTexto || null,
+    sinteseExecutiva: resumoTexto || null,
+    SINTESE_EXECUTIVA: resumoTexto || null,
+    introducao: resumoTexto || null,
+    INTRODUCAO: resumoTexto || null,
     notas: resumoTexto || null,
     NOTAS: resumoTexto || null,
+    observacoes: resumoTexto || null,
+    OBSERVACOES: resumoTexto || null,
+    fechamento: resumoTexto || null,
+    FECHAMENTO: resumoTexto || null,
 
     // Loops
     itens: masterItensList,

@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { TemplateDocument, TemplateSchema, TemplateField, TemplateLoop, TableInspection, TableInspectionRow } from './types/template';
+import { TemplateDocument, TemplateSchema, TemplateField, TemplateLoop, TableInspection, TableInspectionRow, VariavelExemplo } from './types/template';
 import { addLog } from './logger';
 import { initFirebaseAdmin } from './auth';
 
@@ -115,50 +115,67 @@ export interface TextoPadraoTemplate {
   descricao: string;
   responsavel?: string;
   prazo?: string;
+  variaveisExemplo: VariavelExemplo[];
 }
 
-/**
- * Lê as linhas da tabela de corpo do template e extrai os textos padrão
- * convertendo quaisquer resíduos ([xx], R$ XXXX, XXX) para '[A DEFINIR NA REUNIÃO]'.
- */
-export function extrairTextosPadraoDoTemplate(tabelaCorpo: TableInspection | { rows?: TableInspectionRow[] } | null): TextoPadraoTemplate[] {
-  if (!tabelaCorpo || !tabelaCorpo.rows || tabelaCorpo.rows.length <= 1) {
-    return [];
-  }
+const RE_PLACEHOLDER = /\[x+\]|R\$\s*X+|\bX{3,}\b|\bxx\s+dias\b|\[xxx\]/gi;
+const RE_BASELINE = /\b\d{1,3}(?:,\d+)?\s*%|\b\d{2,3}\s*dias\b|R\$\s*[\d.,]+\b|\bdias\s+\d{1,2},\s*\d{1,2}\s+ou\s+\d{1,2}\b/g;
 
-  const limparResiduos = (txt: string) =>
-    (txt || '')
-      .replace(/\[x+\]|R\$\s*X+|\bX{3,}\b/gi, '[A DEFINIR NA REUNIÃO]')
-      .trim();
+function slugCamel(rotulo: string): string {
+  return rotulo
+    .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z0-9]+(.)/g, (_, c) => c.toUpperCase())
+    .replace(/^[^a-zA-Z]+/, '')
+    .replace(/^[A-Z]/, c => c.toLowerCase())
+    .slice(0, 48);
+}
+
+function extrairVariaveisExemplo(texto: string): VariavelExemplo[] {
+  const vars: VariavelExemplo[] = [];
+  for (const linha of texto.split(/\n|;/)) {
+    const rotulo = (linha.split(':')[0] || '').trim().slice(0, 80);
+    for (const m of linha.matchAll(RE_PLACEHOLDER)) {
+      vars.push({ token: m[0], rotulo, nome: slugCamel(rotulo || m[0]), tipo: 'placeholder' });
+    }
+    for (const m of linha.matchAll(RE_BASELINE)) {
+      vars.push({ token: m[0], rotulo, nome: slugCamel(rotulo || m[0]), tipo: 'baseline' });
+    }
+  }
+  return vars;
+}
+
+export function extrairTextosPadraoDoTemplate(
+  tabelaCorpo: TableInspection | { rows?: TableInspectionRow[] } | null
+): TextoPadraoTemplate[] {
+  if (!tabelaCorpo?.rows || tabelaCorpo.rows.length <= 1) return [];
 
   const resultados: TextoPadraoTemplate[] = [];
+  let atual: TextoPadraoTemplate | null = null;
 
-  // Pula a linha 0 (cabeçalho)
   for (let i = 1; i < tabelaCorpo.rows.length; i++) {
-    const row = tabelaCorpo.rows[i];
-    const cells = row.cells || [];
-    const num = (cells[0] || String(i).padStart(2, '0')).trim();
-    const descricaoCrua = cells[1] || '';
-    const responsavel = cells[2] ? limparResiduos(cells[2]) : undefined;
-    const prazo = cells[3] ? limparResiduos(cells[3]) : undefined;
+    const cells = tabelaCorpo.rows[i].cells || [];
+    const num = (cells[0] || '').trim();
+    const conteudo = (cells[1] || '').trim();
+    const responsavel = (cells[2] || '').trim() || undefined;
+    const prazo = (cells[3] || '').trim() || undefined;
+    if (!num && !conteudo && !responsavel && !prazo) continue;
 
-    const descricao = limparResiduos(descricaoCrua);
-    if (!descricao && !num) continue;
-
-    // Se a primeira linha da descrição contiver um título em destaque antes de quebra de linha
-    const linhas = descricao.split('\n');
-    const primeiroParagrafo = linhas[0]?.trim() || '';
-    const titulo = primeiroParagrafo.length < 80 ? primeiroParagrafo : undefined;
-
-    resultados.push({
-      num,
-      titulo,
-      descricao,
-      responsavel,
-      prazo
-    });
+    if (num !== '') {
+      if (atual) resultados.push(atual);
+      atual = { num, titulo: conteudo, descricao: '', responsavel, prazo, variaveisExemplo: [] };
+    } else if (atual) {
+      atual.descricao = atual.descricao ? `${atual.descricao}\n${conteudo}` : conteudo;
+      atual.responsavel = atual.responsavel || responsavel;
+      atual.prazo = atual.prazo || prazo;
+    } else {
+      atual = { num: '00', titulo: 'Introdução', descricao: conteudo, responsavel, prazo, variaveisExemplo: [] };
+    }
   }
+  if (atual) resultados.push(atual);
 
+  for (const r of resultados) {
+    r.variaveisExemplo = extrairVariaveisExemplo(`${r.titulo || ''}\n${r.descricao}`);
+  }
   return resultados;
 }
 
@@ -555,6 +572,7 @@ export async function saveTemplateDocumentToDb(
     structureSummary: data.structureSummary,
     tables: data.tables,
     rawTextPreview: data.rawTextPreview,
+    rawTextFull: (data as any).rawTextFull || '',
     id: newId,
     version: newVersion,
     schema: generatedSchema,
@@ -614,34 +632,85 @@ export async function saveTemplateDocumentToDb(
 }
 
 /**
- * Sets a specific template version as active in Firestore.
+ * Sets a specific template version as active in Firestore and disk.
  */
 export async function setActiveTemplateInDb(targetId: string): Promise<TemplateDocument> {
   const db = getFirestoreInstance();
 
   if (db) {
     try {
-      const docSnap = await db.collection(TEMPLATES_COLLECTION).doc(targetId).get();
+      let docSnap = await db.collection(TEMPLATES_COLLECTION).doc(targetId).get();
+      let raw: any = null;
+      let actualId = targetId;
+
       if (docSnap.exists) {
-        const raw = docSnap.data() as any;
+        raw = docSnap.data();
+      } else {
+        // Query by id field or version if not matching doc key directly
+        const qSnap = await db.collection(TEMPLATES_COLLECTION).where('id', '==', targetId).get();
+        if (!qSnap.empty) {
+          docSnap = qSnap.docs[0];
+          actualId = docSnap.id;
+          raw = docSnap.data();
+        } else {
+          const num = parseInt(targetId.replace(/^v/i, ''), 10);
+          if (!isNaN(num)) {
+            const vSnap = await db.collection(TEMPLATES_COLLECTION).where('version', '==', num).get();
+            if (!vSnap.empty) {
+              docSnap = vSnap.docs[0];
+              actualId = docSnap.id;
+              raw = docSnap.data();
+            }
+          }
+        }
+      }
+
+      if (raw) {
         const now = new Date().toISOString();
         
-        // Update active pointer
-        await db.collection(SYSTEM_CONFIG_COLLECTION).doc(ACTIVE_TEMPLATE_DOC).set({ templateId: targetId, updatedAt: now });
+        // 1. Update active pointer doc
+        await db.collection(SYSTEM_CONFIG_COLLECTION).doc(ACTIVE_TEMPLATE_DOC).set({ 
+          templateId: actualId, 
+          activeId: actualId, 
+          updatedAt: now,
+          updatedBy: 'admin'
+        });
 
-        addLog('WARN', 'ADMIN', `Rollback de template realizado no Firestore para a versão v${raw.version} - ${raw.name}`, {
-          targetId,
+        // 2. Update isActive flags across templates
+        try {
+          const allDocs = await db.collection(TEMPLATES_COLLECTION).get();
+          if (!allDocs.empty) {
+            const batch = db.batch();
+            allDocs.docs.forEach((d: any) => {
+              batch.update(d.ref, { isActive: d.id === actualId, updatedAt: now });
+            });
+            await batch.commit();
+          }
+        } catch (e: any) {
+          console.warn('Aviso ao sincronizar flags isActive no Firestore:', e.message);
+        }
+
+        addLog('INFO', 'ADMIN', `Template ativado com sucesso: v${raw.version} - ${raw.name} (${actualId})`, {
+          targetId: actualId,
           version: raw.version
         });
 
-        const fullBlob = await fetchDocxBlobFromFirestore(db, targetId, raw);
+        const fullBlob = await fetchDocxBlobFromFirestore(db, actualId, raw);
         invalidateActiveTemplateCache();
+
+        // 3. Keep disk fallback synchronized
+        try {
+          rollbackDiskTemplate(actualId);
+        } catch {
+          // ignore disk errors
+        }
 
         return {
           ...raw,
-          id: targetId,
+          id: actualId,
+          isActive: true,
           docxBlobBase64: fullBlob,
-          schema: raw.schema || buildDefaultSchema(targetId, raw.detectedPlaceholders, raw.tables)
+          schema: raw.schema || buildDefaultSchema(actualId, raw.detectedPlaceholders, raw.tables)
         };
       }
     } catch (err: any) {
@@ -685,6 +754,47 @@ export async function updateTemplateSchemaInDb(templateId: string, schema: Templ
   invalidateActiveTemplateCache();
 
   return updatedSchema;
+}
+
+/**
+ * Updates the inspected structure and texts of an existing template in Firestore and disk.
+ */
+export async function updateTemplateInspectionInDb(templateId: string, inspection: any): Promise<void> {
+  const db = getFirestoreInstance();
+  const now = new Date().toISOString();
+  const updateData = {
+    tables: inspection.tables,
+    rawTextPreview: inspection.rawTextPreview,
+    rawTextFull: inspection.rawTextFull || '',
+    detectedPlaceholders: inspection.detectedPlaceholders,
+    structureSummary: inspection.structureSummary,
+    updatedAt: now
+  };
+
+  if (db) {
+    try {
+      await db.collection(TEMPLATES_COLLECTION).doc(templateId).set(updateData, { merge: true });
+    } catch (err: any) {
+      console.warn('Erro ao atualizar inspeção no Firestore:', err.message);
+    }
+  }
+
+  // Update in disk
+  try {
+    const current = loadPersistedTemplatesFromDisk();
+    const idx = current.versions.findIndex(v => v.id === templateId);
+    if (idx !== -1) {
+      current.versions[idx] = {
+        ...current.versions[idx],
+        ...updateData
+      };
+      fs.writeFileSync(TEMPLATES_FILE, JSON.stringify(current, null, 2), 'utf-8');
+    }
+  } catch (err) {
+    console.error('Erro ao atualizar inspeção em disco:', err);
+  }
+
+  invalidateActiveTemplateCache();
 }
 
 /**

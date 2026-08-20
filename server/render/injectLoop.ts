@@ -41,7 +41,9 @@ const slice = (xml: string, b: { start: number; end: number }) => xml.slice(b.st
  */
 export function setCellToTag(tcXml: string, text: string): string {
   const ps = findBlocks(tcXml, 'w:p');
-  if (!ps.length) return tcXml;
+  if (!ps.length) {
+    return tcXml.replace(/<\/w:tc>$/, `<w:p><w:r><w:t xml:space="preserve">${text}</w:t></w:r></w:p></w:tc>`);
+  }
   let p = slice(tcXml, ps[0]);
   const rs = findBlocks(p, 'w:r');
   if (rs.length) {

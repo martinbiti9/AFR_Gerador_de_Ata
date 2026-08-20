@@ -43,6 +43,7 @@ interface Props {
     divergences: Divergence[];
   }) => Promise<void>;
   loading: boolean;
+  error?: string;
 }
 
 export function PreAtaValidationModal({
@@ -53,60 +54,77 @@ export function PreAtaValidationModal({
   divergences: initialDivergences,
   activeTemplateName = '',
   onSaveAndGenerate,
-  loading
+  loading,
+  error
 }: Props) {
-  const [abertura, setAbertura] = useState<AberturaData>(() => ({
-    obraCodigo: initialAbertura?.obraCodigo || '0590',
-    obraNome: initialAbertura?.obraNome || 'Hospital Sabará',
-    fornecedor: initialAbertura?.fornecedor || 'Construmódulo Sistemas Internos Ltda.',
-    assunto: initialAbertura?.assunto || 'REUNIÃO DE Checklist de Contratação e Condições Gerais de Fornecimento',
-    servico: initialAbertura?.servico || 'Drywall, forros e divisórias internas',
-    rm: initialAbertura?.rm || '982366',
-    cot: initialAbertura?.cot || 'COT-590-095',
-    ataNumero: initialAbertura?.ataNumero || '01',
-    dataReuniao: initialAbertura?.dataReuniao || '09/01/2025',
-    horario: initialAbertura?.horario || '10:30h',
-    local: initialAbertura?.local || 'Online - Teams',
-    linkReuniao: initialAbertura?.linkReuniao || '',
-    folha: initialAbertura?.folha || '01',
-    resumoExecutivo: initialAbertura?.resumoExecutivo || 'A reunião consolidou com sucesso o fechamento comercial e técnico para a execução do escopo.',
-    participantes: initialAbertura?.participantes?.length ? initialAbertura.participantes : [
-      {
-        id: 'p-1',
-        nome: 'Thais Louise Barroso',
-        cargoDepto: 'SUPRIMENTOS',
-        empresa: 'Afonso França',
-        email: 'thais.barroso@afonsofranca.com.br',
-        visto: 'Visto'
+  const [abertura, setAbertura] = useState<AberturaData>(() => {
+    const defaultResumo = initialAbertura?.resumoExecutivo || [
+      `1. OBJETO E ESCOPO DA CONTRATAÇÃO:`,
+      `   • Fornecedor: ${initialAbertura?.fornecedor || 'A Definir'}`,
+      `   • Obra: ${initialAbertura?.obraCodigo || '0000'} - ${initialAbertura?.obraNome || 'Obra'}`,
+      `   • Pacote / Serviço: ${initialAbertura?.servico || 'Serviços de Engenharia'} (RM: ${initialAbertura?.rm || 'S/N'} • Cotação: ${initialAbertura?.cot || 'S/N'})`,
+      ``,
+      `2. CONDIÇÃO COMERCIAL & NEGOCIAÇÃO:`,
+      `   • Valor Global Negociado: ${initialAbertura?.valoresComerciais?.valorTotal || 'Conforme Proposta Comercial'}`,
+      `   • Condição de Pagamento: ${initialAbertura?.valoresComerciais?.condicaoPagamento || 'Medições mensais com pagamento 30 dias após emissão da NF'}`,
+      `   • Retenção de Garantia: ${initialAbertura?.valoresComerciais?.retencaoGarantia || '5% sobre cada medição, liberada 180 dias após encerramento'}`,
+      ``,
+      `3. CRONOGRAMA & MOBILIZAÇÃO:`,
+      `   • Início da Mobilização: ${initialAbertura?.prazosCronograma?.mobilizacao || 'Imediato após aprovação cadastral e documental'}`,
+      `   • Prazo de Execução: ${initialAbertura?.prazosCronograma?.execucao || 'Conforme cronograma físico da obra'}`,
+      ``,
+      `4. DIRETRIZES DE SST E LOGÍSTICA DE CANTEIRO:`,
+      `   • Cumprimento rigoroso das NRs (NR-06, NR-18, NR-35) e integração prévia de 100% da equipe.`,
+      `   • Fornecimento de EPIs com CA válido e liberação de acesso com documentação de SST regularizada.`,
+      ``,
+      `5. DELIBERAÇÕES & PRÓXIMOS PASSOS:`,
+      `   • Envio das minutas contratuais e cumprimento das pendências registradas para assinatura do contrato.`
+    ].join('\n');
+
+    return {
+      obraCodigo: initialAbertura?.obraCodigo || '',
+      obraNome: initialAbertura?.obraNome || '',
+      fornecedor: initialAbertura?.fornecedor || '',
+      assunto: initialAbertura?.assunto || 'Reunião de Alinhamento Técnico, Comercial e Minuta Contratual',
+      servico: initialAbertura?.servico || '',
+      rm: initialAbertura?.rm || '',
+      cot: initialAbertura?.cot || '',
+      ataNumero: initialAbertura?.ataNumero || '01',
+      dataReuniao: initialAbertura?.dataReuniao || new Date().toLocaleDateString('pt-BR'),
+      horario: initialAbertura?.horario || '10:00h',
+      local: initialAbertura?.local || 'Online / Teams',
+      linkReuniao: initialAbertura?.linkReuniao || '',
+      folha: initialAbertura?.folha || '01',
+      resumoExecutivo: defaultResumo,
+      participantes: initialAbertura?.participantes?.length ? initialAbertura.participantes : [],
+      valoresComerciais: initialAbertura?.valoresComerciais || {
+        valorTotal: '',
+        valorServicos: '',
+        valorIndustrializacao: '',
+        valorVendaMercantil: '',
+        valorLocacao: '',
+        valorFretes: '',
+        valorGerenciamento: '',
+        valorFaturamentoDireto: '',
+        sinalMobilizacao: '',
+        condicaoPagamento: 'Medições mensais com pagamento 30 dias após aprovação e emissão da NF.',
+        retencaoGarantia: '5% sobre o valor total da contratação (liberação 180 dias após Termo de Encerramento).',
+        riscoSacado: '',
+        reajuste: 'Fixo e irreajustável pelo período contratual.'
+      },
+      prazosCronograma: initialAbertura?.prazosCronograma || {
+        mobilizacao: 'Imediata após liberação de SST e homologação contratual',
+        elaboracaoProjeto: '',
+        aprovacaoProjeto: '',
+        entregaMaterial: '',
+        medidasDefinitivas: '',
+        fabricacao: '',
+        execucao: 'Conforme cronograma da obra',
+        comissionamento: '',
+        operacaoAssistida: ''
       }
-    ],
-    valoresComerciais: initialAbertura?.valoresComerciais || {
-      valorTotal: 'R$ 2.782.400,00',
-      valorServicos: '',
-      valorIndustrializacao: '',
-      valorVendaMercantil: '',
-      valorLocacao: '',
-      valorFretes: '',
-      valorGerenciamento: '',
-      valorFaturamentoDireto: 'Mesma condição de pagamento da contratação inicial',
-      sinalMobilizacao: 'Via recibo ou NF? Como será descontado',
-      condicaoPagamento: '35% Projeto; 35% contra o aviso de liberação do material; 30% 14 dias após o aviso; pagamento dias 10, 20 ou 30 exclusivamente via crédito em conta.',
-      retencaoGarantia: '5% sobre o valor total da contratação. Liberação 180 dias após o Termo de Encerramento Definitivo e entrega integral da documentação.',
-      riscoSacado: 'Risco sacado a 120 dias – aplicável apenas ao faturamento da Afonso França. Taxa a.m. de 1,311%.',
-      reajuste: 'Fixo por 12 meses / fixo até o término da prestação dos serviços.'
-    },
-    prazosCronograma: initialAbertura?.prazosCronograma || {
-      mobilizacao: 'Início da mobilização de colaboradores conforme alinhado',
-      elaboracaoProjeto: 'xx dias após aprovação do pedido',
-      aprovacaoProjeto: 'xx dias após envio do projeto',
-      entregaMaterial: 'dias a partir do pedido',
-      medidasDefinitivas: 'dias após o envio do pedido',
-      fabricacao: 'xx dias após aprovação do projeto',
-      execucao: 'xx dias após mobilização',
-      comissionamento: 'Conforme cronograma',
-      operacaoAssistida: 'Conforme cronograma'
-    }
-  }));
+    };
+  });
 
   const [topics, setTopics] = useState<TopicCard[]>(initialAnalysis?.topics || []);
   const [tipoFornecimento, setTipoFornecimento] = useState<string>(
@@ -596,19 +614,52 @@ export function PreAtaValidationModal({
           {activeTab === 'resumo' && (
             <div className="space-y-4 animate-in fade-in">
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-2xs space-y-3">
-                <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
-                  <FileText size={16} className="text-blue-600" />
-                  Resumo Executivo da Ata / Alinhamento Geral
-                </h3>
+                <div className="flex items-center justify-between">
+                  <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                    <FileText size={16} className="text-blue-600" />
+                    Resumo Executivo da Ata / Alinhamento Geral
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const formatted = [
+                        `1. OBJETO E ESCOPO DA CONTRATAÇÃO:`,
+                        `   • Fornecedor: ${abertura.fornecedor || 'A Definir'}`,
+                        `   • Obra: ${abertura.obraCodigo || '0000'} - ${abertura.obraNome || 'Obra'}`,
+                        `   • Pacote / Serviço: ${abertura.servico || 'Serviços de Engenharia'} (RM: ${abertura.rm || 'S/N'} • Cotação: ${abertura.cot || 'S/N'})`,
+                        ``,
+                        `2. CONDIÇÃO COMERCIAL & NEGOCIAÇÃO:`,
+                        `   • Valor Global Negociado: ${abertura.valoresComerciais?.valorTotal || 'Conforme Proposta Comercial'}`,
+                        `   • Condição de Pagamento: ${abertura.valoresComerciais?.condicaoPagamento || 'Medições mensais com pagamento 30 dias após emissão da NF'}`,
+                        `   • Retenção de Garantia: ${abertura.valoresComerciais?.retencaoGarantia || '5% sobre cada medição, liberada 180 dias após encerramento'}`,
+                        ``,
+                        `3. CRONOGRAMA & MOBILIZAÇÃO:`,
+                        `   • Início da Mobilização: ${abertura.prazosCronograma?.mobilizacao || 'Imediato após liberação de SST e aprovação cadastral'}`,
+                        `   • Prazo de Execução: ${abertura.prazosCronograma?.execucao || 'Conforme cronograma físico da obra'}`,
+                        ``,
+                        `4. DIRETRIZES DE SST E LOGÍSTICA DE CANTEIRO:`,
+                        `   • Cumprimento rigoroso das NRs (NR-06, NR-18, NR-35) e integração prévia de 100% da equipe.`,
+                        `   • Fornecimento diário de EPIs com CA válido e acesso condicionado à homologação de SST.`,
+                        ``,
+                        `5. DELIBERAÇÕES & PRÓXIMOS PASSOS:`,
+                        `   • Envio das minutas contratuais e saneamento das pendências registradas para assinatura do contrato.`
+                      ].join('\n');
+                      updateAbertura('resumoExecutivo', formatted);
+                    }}
+                    className="text-[11px] font-bold text-blue-600 hover:text-blue-700 bg-blue-50 hover:bg-blue-100 border border-blue-200 px-2.5 py-1 rounded-md transition-colors"
+                  >
+                    Auto-organizar com Dados da Reunião
+                  </button>
+                </div>
                 <p className="text-xs text-slate-500">
-                  Texto descritivo com a consolidação da reunião, valor final acordado, diretrizes de SST, logística e próximos passos fundamentais da obra.
+                  Resumo executivo organizado e indentado consolidando o objeto, valores negociados, marcos de cronograma, diretrizes de SST e responsabilidades imediatas.
                 </p>
                 <textarea
-                  rows={8}
-                  className="w-full bg-slate-50 border border-slate-300 rounded-lg p-3 text-xs text-slate-800 leading-relaxed focus:bg-white focus:outline-none focus:border-blue-500"
+                  rows={14}
+                  className="w-full bg-slate-50 border border-slate-300 rounded-lg p-3.5 text-xs text-slate-800 font-mono leading-relaxed focus:bg-white focus:outline-none focus:border-blue-500 shadow-inner"
                   value={abertura.resumoExecutivo || ''}
                   onChange={(e) => updateAbertura('resumoExecutivo', e.target.value)}
-                  placeholder="Ex: A reunião consolidou com sucesso o fechamento comercial e técnico..."
+                  placeholder="1. OBJETO E ESCOPO DA CONTRATAÇÃO:&#10;   • Fornecedor: ...&#10;   • Obra: ..."
                 />
               </div>
             </div>
@@ -1083,9 +1134,18 @@ export function PreAtaValidationModal({
 
         {/* Modal Bottom Footer */}
         <div className="px-6 py-4 bg-white border-t border-slate-200 flex flex-col sm:flex-row items-center justify-between gap-3 shrink-0">
-          <div className="text-xs text-slate-500 flex items-center gap-1.5">
-            <CheckCircle2 size={16} className="text-green-600" />
-            <span>Todos os atributos validados serão mesclados com precisão no template DOCX.</span>
+          <div className="text-xs text-slate-500 flex items-center gap-1.5 flex-1">
+            {error ? (
+              <div className="flex items-center gap-2 text-red-600 bg-red-50 px-3 py-2 rounded-lg border border-red-200 w-full sm:w-auto font-medium">
+                <AlertTriangle size={16} className="shrink-0" />
+                <span className="whitespace-pre-wrap text-left">{error}</span>
+              </div>
+            ) : (
+              <>
+                <CheckCircle2 size={16} className="text-green-600 shrink-0" />
+                <span>Todos os atributos validados serão mesclados com precisão no template DOCX.</span>
+              </>
+            )}
           </div>
 
           <div className="flex items-center gap-3 w-full sm:w-auto">

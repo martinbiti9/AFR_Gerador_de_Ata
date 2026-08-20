@@ -161,9 +161,31 @@ export async function safeFetchJson<T = any>(
           }
           throw new Error(`Erro (${res.status}): ${rawText.slice(0, 180)}`);
         }
-        throw new Error(`Erro ao interpretar resposta do servidor: Formato de dados não reconhecido.`);
+        
+        // Se a resposta for 200 OK mas não for um JSON estrito (ex.: texto puro ou transcrição em texto),
+        // retorna objeto acessível via .text, .result ou .data para evitar quebra da interface
+        data = {
+          success: true,
+          text: rawText.trim(),
+          result: rawText.trim(),
+          data: rawText.trim(),
+          raw: rawText.trim()
+        };
       }
     }
+  } else {
+    data = { success: true, text: '' };
+  }
+
+  // Se data é uma string simples retornada pelo JSON.parse
+  if (typeof data === 'string') {
+    data = {
+      success: true,
+      text: data,
+      result: data,
+      data: data,
+      raw: data
+    };
   }
 
   if (!res.ok) {

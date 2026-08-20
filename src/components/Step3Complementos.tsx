@@ -43,19 +43,22 @@ export function Step3Complementos({ state, updateState, onMetadataDetected }: Pr
     setLoading(true);
     setError('');
     
-    const formData = new FormData();
-    files.forEach(f => formData.append('files', f));
-    formData.append('checklist', JSON.stringify(state.analysisResult));
+    const proposalFormData = new FormData();
+    files.forEach(f => proposalFormData.append('files', f));
+    proposalFormData.append('checklist', JSON.stringify(state.analysisResult));
+
+    const metaFormData = new FormData();
+    files.forEach(f => metaFormData.append('files', f));
 
     try {
       const [result, metaJson] = await Promise.all([
         safeFetchJson<Divergence[]>('/api/analyze-proposal', {
           method: 'POST',
-          body: formData
+          body: proposalFormData
         }),
         safeFetchJson<{ metadata?: Partial<AberturaData> }>('/api/extract-metadata', {
           method: 'POST',
-          body: formData
+          body: metaFormData
         }).catch(() => null)
       ]);
       

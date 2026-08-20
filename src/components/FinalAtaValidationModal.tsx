@@ -65,7 +65,7 @@ export function FinalAtaValidationModal({
     local: initialAbertura?.local || 'Online - Teams',
     linkReuniao: initialAbertura?.linkReuniao || '',
     folha: initialAbertura?.folha || '02',
-    resumoExecutivo: initialAbertura?.resumoExecutivo || 'A reunião consolidou com sucesso o fechamento comercial e técnico para a execução do escopo.',
+    resumoExecutivo: initialAbertura?.resumoExecutivo || initialFinalData?.notes || initialFinalData?.resumo || '',
     participantes: initialAbertura?.participantes?.length ? initialAbertura.participantes : [
       {
         id: 'p-1',
@@ -108,7 +108,7 @@ export function FinalAtaValidationModal({
     return items.map((it, idx) => {
       if (typeof it === 'string') {
         return {
-          num: String(idx + 1),
+          num: String(idx + 1).padStart(2, '0'),
           titulo: `Item ${idx + 1}`,
           descricao: it,
           responsavel: 'Informativo / Contratada',
@@ -116,11 +116,12 @@ export function FinalAtaValidationModal({
         };
       }
       return {
-        num: it.num || String(idx + 1),
+        num: it.num || String(idx + 1).padStart(2, '0'),
         titulo: it.titulo || `Item ${idx + 1}`,
         descricao: it.descricao || '',
         responsavel: it.responsavel || 'Informativo / Contratada',
-        prazo: it.prazo || 'Conforme cronograma'
+        prazo: it.prazo || 'Conforme cronograma',
+        blocos: it.blocos
       };
     });
   };
@@ -131,24 +132,42 @@ export function FinalAtaValidationModal({
   const [pendingItems, setPendingItems] = useState<FinalAtaItem[]>(() =>
     parseToStructuredItems(initialFinalData?.pendingItems || [])
   );
-  const [notes, setNotes] = useState<string>(initialFinalData?.notes || '');
-  const [activeTab, setActiveTab] = useState<'agreed' | 'pending' | 'header' | 'resumo' | 'commercial' | 'prazos'>('agreed');
+  const [notes, setNotes] = useState<string>(initialFinalData?.notes || initialFinalData?.resumo || initialAbertura?.resumoExecutivo || '');
+  const [activeTab, setActiveTab] = useState<'agreed' | 'pending' | 'participantes' | 'resumo' | 'header' | 'commercial' | 'prazos'>('agreed');
 
   React.useEffect(() => {
     if (isOpen) {
+      const execSummary = initialAbertura?.resumoExecutivo || initialFinalData?.notes || initialFinalData?.resumo || '';
+      const rawParts = (initialFinalData?.participantes && initialFinalData.participantes.length > 0)
+        ? initialFinalData.participantes
+        : (initialAbertura?.participantes || []);
+
+      const validParts = rawParts.map((p: any, idx: number) => ({
+        id: p.id || `p-${idx + 1}`,
+        nome: p.nome || '',
+        cargoDepto: p.cargoDepto || p.cargo || '',
+        empresa: p.empresa || '',
+        email: p.email || '',
+        visto: p.visto || ''
+      }));
+
       if (initialAbertura) {
         setAbertura(prev => ({
           ...prev,
           ...initialAbertura,
-          participantes: initialAbertura.participantes?.length ? initialAbertura.participantes : prev.participantes,
+          resumoExecutivo: execSummary || prev.resumoExecutivo,
+          participantes: validParts.length > 0 ? validParts : prev.participantes,
           valoresComerciais: { ...prev.valoresComerciais, ...(initialAbertura.valoresComerciais || {}) },
           prazosCronograma: { ...prev.prazosCronograma, ...(initialAbertura.prazosCronograma || {}) }
         }));
+      } else if (validParts.length > 0) {
+        setAbertura(prev => ({ ...prev, participantes: validParts }));
       }
+
       if (initialFinalData) {
         setAgreedItems(parseToStructuredItems(initialFinalData.agreedItems || []));
         setPendingItems(parseToStructuredItems(initialFinalData.pendingItems || []));
-        setNotes(initialFinalData.notes || '');
+        setNotes(initialFinalData.notes || initialFinalData.resumo || execSummary);
       }
     }
   }, [isOpen, initialAbertura, initialFinalData]);
@@ -254,12 +273,18 @@ export function FinalAtaValidationModal({
   };
 
   const handleConfirm = async () => {
+    const finalSummary = notes || abertura.resumoExecutivo || '';
+    const syncedAbertura: AberturaData = {
+      ...abertura,
+      resumoExecutivo: finalSummary
+    };
     await onSaveAndGenerate({
-      abertura,
+      abertura: syncedAbertura,
       finalData: {
         agreedItems,
         pendingItems,
-        notes
+        notes: finalSummary,
+        resumo: finalSummary
       }
     });
   };
@@ -325,15 +350,15 @@ export function FinalAtaValidationModal({
 
           <button
             type="button"
-            onClick={() => setActiveTab('header')}
+            onClick={() => setActiveTab('participantes')}
             className={`py-3 px-3 border-b-2 flex items-center gap-2 whitespace-nowrap transition-colors ${
-              activeTab === 'header'
-                ? 'border-blue-600 text-blue-700 bg-white'
+              activeTab === 'participantes'
+                ? 'border-indigo-600 text-indigo-700 bg-white'
                 : 'border-transparent hover:text-slate-900'
             }`}
           >
-            <Building2 size={15} />
-            3. Cabeçalho & Participantes
+            <Users size={15} className="text-indigo-600" />
+            3. Participantes ({(abertura.participantes || []).length})
           </button>
 
           <button
@@ -351,6 +376,19 @@ export function FinalAtaValidationModal({
 
           <button
             type="button"
+            onClick={() => setActiveTab('header')}
+            className={`py-3 px-3 border-b-2 flex items-center gap-2 whitespace-nowrap transition-colors ${
+              activeTab === 'header'
+                ? 'border-blue-600 text-blue-700 bg-white'
+                : 'border-transparent hover:text-slate-900'
+            }`}
+          >
+            <Building2 size={15} />
+            5. Obra & Cabeçalho
+          </button>
+
+          <button
+            type="button"
             onClick={() => setActiveTab('commercial')}
             className={`py-3 px-3 border-b-2 flex items-center gap-2 whitespace-nowrap transition-colors ${
               activeTab === 'commercial'
@@ -359,7 +397,7 @@ export function FinalAtaValidationModal({
             }`}
           >
             <DollarSign size={15} />
-            5. Valores & Condições
+            6. Valores Comerciais
           </button>
 
           <button
@@ -372,7 +410,7 @@ export function FinalAtaValidationModal({
             }`}
           >
             <Clock size={15} />
-            6. Cronograma & Prazos
+            7. Cronograma & Prazos
           </button>
         </div>
 
@@ -568,14 +606,144 @@ export function FinalAtaValidationModal({
             </div>
           )}
 
-          {/* TAB 3: CABEÇALHO & PARTICIPANTES */}
+          {/* TAB 3: PARTICIPANTES DA REUNIÃO */}
+          {activeTab === 'participantes' && (
+            <div className="space-y-4 animate-in fade-in">
+              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-2xs space-y-4">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 pb-3">
+                  <div>
+                    <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                      <Users size={16} className="text-indigo-600" />
+                      Tabela de Participantes da Reunião ({(abertura.participantes || []).length})
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      Identificação dos presentes extraídos da transcrição, dados de abertura e propostas.
+                    </p>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={addParticipante}
+                    className="inline-flex items-center gap-1.5 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 border border-indigo-200 px-3.5 py-2 rounded-lg transition-colors shadow-2xs w-fit"
+                  >
+                    <Plus size={14} /> Adicionar Participante
+                  </button>
+                </div>
+
+                <div className="bg-indigo-50/70 border border-indigo-100 rounded-lg p-3 text-xs text-indigo-900 flex items-start gap-2.5">
+                  <Sparkles size={16} className="text-indigo-600 shrink-0 mt-0.5" />
+                  <p className="leading-relaxed">
+                    <strong>Leitura Automática pela IA:</strong> Os participantes foram detectados com base na transcrição das falas e apresentações da reunião. Revise e complete os campos de <em>Nome</em>, <em>Cargo/Departamento</em>, <em>Empresa</em> e <em>E-mail</em> antes de emitir a versão final da Ata.
+                  </p>
+                </div>
+
+                <div className="overflow-x-auto rounded-lg border border-slate-200">
+                  <table className="w-full text-xs text-left">
+                    <thead className="bg-slate-100 text-slate-700 font-bold uppercase text-[10px]">
+                      <tr>
+                        <th className="p-3 w-10 text-center">#</th>
+                        <th className="p-3 min-w-[180px]">Nome Completo</th>
+                        <th className="p-3 min-w-[160px]">Cargo / Departamento</th>
+                        <th className="p-3 min-w-[160px]">Empresa</th>
+                        <th className="p-3 min-w-[180px]">E-mail Corporativo</th>
+                        <th className="p-3 min-w-[100px]">Visto / Presença</th>
+                        <th className="p-3 text-center w-12">Ação</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100 bg-white">
+                      {(abertura.participantes || []).length === 0 ? (
+                        <tr>
+                          <td colSpan={7} className="p-6 text-center text-slate-400 text-xs italic">
+                            Nenhum participante cadastrado. Clique em "Adicionar Participante" acima.
+                          </td>
+                        </tr>
+                      ) : (
+                        (abertura.participantes || []).map((p, idx) => (
+                          <tr key={p.id || idx} className="hover:bg-slate-50/80 transition-colors">
+                            <td className="p-2.5 text-center text-slate-400 font-bold text-[11px]">
+                              {idx + 1}
+                            </td>
+                            <td className="p-2">
+                              <input
+                                type="text"
+                                placeholder="Nome do Participante"
+                                className="w-full bg-slate-50 border border-slate-200 rounded p-1.5 text-xs font-semibold text-slate-800 focus:bg-white focus:border-indigo-500"
+                                value={p.nome}
+                                onChange={(e) => updateParticipante(idx, 'nome', e.target.value)}
+                              />
+                            </td>
+                            <td className="p-2">
+                              <input
+                                type="text"
+                                placeholder="Ex: Eng. Coordenador"
+                                className="w-full bg-slate-50 border border-slate-200 rounded p-1.5 text-xs text-slate-800 focus:bg-white focus:border-indigo-500"
+                                value={p.cargoDepto || ''}
+                                onChange={(e) => updateParticipante(idx, 'cargoDepto', e.target.value)}
+                              />
+                            </td>
+                            <td className="p-2">
+                              <input
+                                type="text"
+                                placeholder="Ex: Afonso França / Fornecedor"
+                                className="w-full bg-slate-50 border border-slate-200 rounded p-1.5 text-xs text-slate-800 focus:bg-white focus:border-indigo-500"
+                                value={p.empresa}
+                                onChange={(e) => updateParticipante(idx, 'empresa', e.target.value)}
+                              />
+                            </td>
+                            <td className="p-2">
+                              <input
+                                type="email"
+                                placeholder="email@empresa.com.br"
+                                className="w-full bg-slate-50 border border-slate-200 rounded p-1.5 text-xs text-slate-800 focus:bg-white focus:border-indigo-500"
+                                value={p.email}
+                                onChange={(e) => updateParticipante(idx, 'email', e.target.value)}
+                              />
+                            </td>
+                            <td className="p-2">
+                              <input
+                                type="text"
+                                placeholder="Presente"
+                                className="w-full bg-slate-50 border border-slate-200 rounded p-1.5 text-xs text-slate-800 focus:bg-white focus:border-indigo-500"
+                                value={p.visto || ''}
+                                onChange={(e) => updateParticipante(idx, 'visto', e.target.value)}
+                              />
+                            </td>
+                            <td className="p-2 text-center">
+                              <button
+                                type="button"
+                                onClick={() => removeParticipante(idx)}
+                                title="Remover participante"
+                                className="text-slate-400 hover:text-red-600 p-1 rounded hover:bg-red-50 transition-colors"
+                              >
+                                <Trash2 size={15} />
+                              </button>
+                            </td>
+                          </tr>
+                        ))
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 5: CABEÇALHO & DADOS DA OBRA */}
           {activeTab === 'header' && (
             <div className="space-y-6 animate-in fade-in">
               <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-2xs space-y-4">
-                <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
-                  <Building2 size={16} className="text-blue-600" />
-                  Identificação da Reunião e Obra (Template DOCX)
-                </h3>
+                <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                  <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
+                    <Building2 size={16} className="text-blue-600" />
+                    Identificação da Reunião e Obra (Template DOCX)
+                  </h3>
+                  <button
+                    type="button"
+                    onClick={() => setActiveTab('participantes')}
+                    className="text-xs text-indigo-600 hover:text-indigo-800 font-semibold flex items-center gap-1"
+                  >
+                    <Users size={14} /> Ver Participantes ({(abertura.participantes || []).length})
+                  </button>
+                </div>
 
                 <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3 text-xs">
                   <div>
@@ -707,88 +875,6 @@ export function FinalAtaValidationModal({
                       onChange={(e) => updateAbertura('linkReuniao', e.target.value)}
                     />
                   </div>
-                </div>
-              </div>
-
-              {/* Participantes */}
-              <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-2xs space-y-4">
-                <div className="flex items-center justify-between">
-                  <h3 className="text-xs font-bold text-slate-800 uppercase tracking-wider flex items-center gap-2">
-                    <Users size={16} className="text-indigo-600" />
-                    Tabela de Participantes da Reunião
-                  </h3>
-                  <button
-                    type="button"
-                    onClick={addParticipante}
-                    className="flex items-center gap-1 text-xs font-bold text-indigo-700 bg-indigo-50 hover:bg-indigo-100 px-3 py-1.5 rounded-lg transition-colors"
-                  >
-                    <Plus size={14} /> Adicionar Participante
-                  </button>
-                </div>
-
-                <div className="overflow-x-auto">
-                  <table className="w-full text-xs text-left">
-                    <thead className="bg-slate-100 text-slate-600 font-bold uppercase text-[10px]">
-                      <tr>
-                        <th className="p-2.5 rounded-l">Nome / Cargo</th>
-                        <th className="p-2.5">Empresa</th>
-                        <th className="p-2.5">E-mail</th>
-                        <th className="p-2.5">Visto</th>
-                        <th className="p-2.5 rounded-r w-10"></th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                      {(abertura.participantes || []).map((p, idx) => (
-                        <tr key={p.id || idx} className="hover:bg-slate-50">
-                          <td className="p-2">
-                            <input
-                              type="text"
-                              placeholder="Nome do Participante"
-                              className="w-full bg-slate-50 border border-slate-200 rounded p-1.5 text-xs font-medium text-slate-800"
-                              value={p.nome}
-                              onChange={(e) => updateParticipante(idx, 'nome', e.target.value)}
-                            />
-                          </td>
-                          <td className="p-2">
-                            <input
-                              type="text"
-                              placeholder="Empresa / Departamento"
-                              className="w-full bg-slate-50 border border-slate-200 rounded p-1.5 text-xs text-slate-800"
-                              value={p.empresa}
-                              onChange={(e) => updateParticipante(idx, 'empresa', e.target.value)}
-                            />
-                          </td>
-                          <td className="p-2">
-                            <input
-                              type="email"
-                              placeholder="email@empresa.com.br"
-                              className="w-full bg-slate-50 border border-slate-200 rounded p-1.5 text-xs text-slate-800"
-                              value={p.email}
-                              onChange={(e) => updateParticipante(idx, 'email', e.target.value)}
-                            />
-                          </td>
-                          <td className="p-2">
-                            <input
-                              type="text"
-                              placeholder="Visto"
-                              className="w-full bg-slate-50 border border-slate-200 rounded p-1.5 text-xs text-slate-800"
-                              value={p.visto || ''}
-                              onChange={(e) => updateParticipante(idx, 'visto', e.target.value)}
-                            />
-                          </td>
-                          <td className="p-2 text-center">
-                            <button
-                              type="button"
-                              onClick={() => removeParticipante(idx)}
-                              className="text-slate-400 hover:text-red-600 p-1"
-                            >
-                              <Trash2 size={14} />
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
                 </div>
               </div>
             </div>

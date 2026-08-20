@@ -265,6 +265,7 @@ export interface TemplateVersion {
   name: string;
   description: string;
   companyName: string;
+  isActive?: boolean;
   primaryColor?: string;
   tableHeaderBg?: string;
   fontFamily?: string;

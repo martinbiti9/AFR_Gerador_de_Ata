@@ -8,6 +8,7 @@ import {
   UploadCloud, 
   Edit3, 
   Sparkles, 
+  Wand2,
   ChevronDown, 
   ChevronUp, 
   Plus, 
@@ -166,13 +167,10 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
   const [transcript, setTranscript] = useState(state.finalAtaText || '');
   const [isTextareaExpanded, setIsTextareaExpanded] = useState(false);
   const [loadingExtract, setLoadingExtract] = useState(false);
+  const [loadingExtractMetadata, setLoadingExtractMetadata] = useState(false);
+  const [extractSuccessMsg, setExtractSuccessMsg] = useState('');
   const [loadingDraft, setLoadingDraft] = useState(false);
   const [loadingDocx, setLoadingDocx] = useState(false);
-  const [loadingCleanDocx, setLoadingCleanDocx] = useState(false);
-  const [cleanExportErrors, setCleanExportErrors] = useState<{
-    topicosPendentes: { topicoId: string; titulo: string }[];
-    camposADefinir: { topicoId: string; titulo: string; campos: string[] }[];
-  } | null>(null);
   const [error, setError] = useState('');
   
   // Template status
@@ -180,12 +178,12 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
   const [activeTemplateName, setActiveTemplateName] = useState<string>('');
   const [isWarningModalOpen, setIsWarningModalOpen] = useState(false);
 
-  // Local state for the editable draft and accordion collapse
+  // Local state for the editable draft and accordion collapse - only set when synthesized or previously saved
   const [draftData, setDraftData] = useState<FinalAtaData | null>(() => {
     if (state.finalAtaData && (state.finalAtaData.agreedItems?.length > 0 || state.finalAtaData.pendingItems?.length > 0 || state.finalAtaData.notes)) {
       return state.finalAtaData;
     }
-    return buildInitialDraftData(state);
+    return null;
   });
   const [isDraftExpanded, setIsDraftExpanded] = useState(true);
   const [editMode, setEditMode] = useState<'cards' | 'raw'>('cards');
@@ -205,15 +203,6 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
 
   useEffect(() => {
     checkTemplateStatus();
-  }, []);
-
-  // Ensure initial draftData is populated in parent state if empty
-  useEffect(() => {
-    if (!state.finalAtaData || (!state.finalAtaData.agreedItems?.length && !state.finalAtaData.pendingItems?.length && !state.finalAtaData.notes)) {
-      const initial = buildInitialDraftData(state);
-      setDraftData(initial);
-      updateState({ finalAtaData: initial });
-    }
   }, []);
 
   // Synchronize internal state whenever state from parent changes
@@ -260,7 +249,7 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
         body: formData
       });
       
-      const newText = data.text || '';
+      const newText = (typeof data === 'string' ? data : (data?.text || (data as any)?.result || (data as any)?.data || '')).trim();
       setTranscript(newText);
       setIsTextareaExpanded(true);
       updateState({ finalAtaText: newText });
@@ -288,6 +277,66 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
     }
   };
 
+  const handleExtractMetadataFromTranscript = async () => {
+    if (!transcript.trim()) {
+      setError('Cole ou anexe um texto de transcrição para identificar os dados cadastrais.');
+      return;
+    }
+
+    setLoadingExtractMetadata(true);
+    setError('');
+    setExtractSuccessMsg('');
+
+    try {
+      const resJson = await safeFetchJson<{ metadata?: Partial<AberturaData> }>('/api/extract-metadata-text', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ text: transcript })
+      });
+
+      if (resJson?.metadata && Object.keys(resJson.metadata).length > 0) {
+        const meta = resJson.metadata;
+        if (onMetadataDetected) {
+          onMetadataDetected(meta);
+        }
+
+        // Se houver participantes ou dados detectados, mescla com abertura
+        if (state.abertura) {
+          const updatedAbertura: AberturaData = {
+            ...state.abertura,
+            obraCodigo: meta.obraCodigo || state.abertura.obraCodigo,
+            obraNome: meta.obraNome || state.abertura.obraNome,
+            fornecedor: meta.fornecedor || state.abertura.fornecedor,
+            assunto: meta.assunto || state.abertura.assunto,
+            servico: meta.servico || state.abertura.servico,
+            rm: meta.rm || state.abertura.rm,
+            cot: meta.cot || state.abertura.cot,
+            ataNumero: meta.ataNumero || state.abertura.ataNumero,
+            dataReuniao: meta.dataReuniao || state.abertura.dataReuniao,
+            horario: meta.horario || state.abertura.horario,
+            local: meta.local || state.abertura.local,
+            linkReuniao: meta.linkReuniao || state.abertura.linkReuniao,
+            folha: meta.folha || state.abertura.folha,
+            valoresComerciais: meta.valoresComerciais || state.abertura.valoresComerciais,
+            prazosCronograma: meta.prazosCronograma || state.abertura.prazosCronograma,
+            participantes: (meta.participantes && meta.participantes.length > 0) ? meta.participantes : state.abertura.participantes,
+            resumoExecutivo: meta.resumoExecutivo || state.abertura.resumoExecutivo
+          };
+          updateState({ abertura: updatedAbertura });
+        }
+
+        setExtractSuccessMsg('Dados cadastrais e participantes extraídos com sucesso a partir da transcrição!');
+        setTimeout(() => setExtractSuccessMsg(''), 6000);
+      } else {
+        setError('Nenhum dado cadastral ou participante novo foi detectado na transcrição informada.');
+      }
+    } catch (err: any) {
+      setError(err.message || 'Erro ao extrair metadados da transcrição.');
+    } finally {
+      setLoadingExtractMetadata(false);
+    }
+  };
+
   const draftFinalAta = async () => {
     setLoadingDraft(true);
     setError('');
@@ -307,18 +356,37 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
       setDraftData(data);
       setIsDraftExpanded(true);
       
-      if (data?.participantes && data.participantes.length > 0 && state.abertura) {
-        updateState({ 
-          finalAtaData: data, 
-          finalAtaText: transcript,
-          abertura: {
-            ...state.abertura,
-            participantes: data.participantes
-          }
-        });
-      } else {
-        updateState({ finalAtaData: data, finalAtaText: transcript });
-      }
+      const rawParts = data?.participantes && Array.isArray(data.participantes) && data.participantes.length > 0
+        ? data.participantes
+        : (state.abertura?.participantes || []);
+
+      const mappedParticipantes = rawParts.map((p: any, idx: number) => ({
+        id: p.id || `p-${idx + 1}`,
+        nome: p.nome || '',
+        cargoDepto: p.cargoDepto || p.cargo || '',
+        empresa: p.empresa || '',
+        email: p.email || '',
+        visto: p.visto || ''
+      }));
+
+      const execResumo = data.resumo || data.notes || state.abertura?.resumoExecutivo || '';
+
+      const updatedAbertura = state.abertura ? {
+        ...state.abertura,
+        participantes: mappedParticipantes,
+        resumoExecutivo: execResumo
+      } : null;
+
+      updateState({ 
+        finalAtaData: {
+          ...data,
+          participantes: mappedParticipantes,
+          notes: execResumo,
+          resumo: execResumo
+        }, 
+        finalAtaText: transcript,
+        ...(updatedAbertura ? { abertura: updatedAbertura } : {})
+      });
     } catch (err: any) {
       setError(err.message || 'Erro ao rascunhar Ata Final');
     } finally {
@@ -385,44 +453,6 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
       setError(errMsg);
     } finally {
       setLoadingDocx(false);
-    }
-  };
-
-  const generateCleanDocx = async () => {
-    setError('');
-    setCleanExportErrors(null);
-    setLoadingCleanDocx(true);
-
-    try {
-      const blob = await safeFetchBlob('/api/generate-final-ata-clean', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          abertura: state.abertura,
-          analysisResult: state.analysisResult,
-          divergences: state.divergences,
-          transcript,
-          finalAtaData: draftData,
-          meetingId: state.meetingId
-        })
-      });
-
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `Ata_Final_Fornecedor_Limpa_${state.abertura?.obraCodigo || 'Reuniao'}.docx`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      window.URL.revokeObjectURL(url);
-    } catch (err: any) {
-      const errMsg = err.message || 'Erro ao exportar Versão Limpa';
-      if (errMsg.includes('Template DOCX') || errMsg.includes('template')) {
-        setIsWarningModalOpen(true);
-      }
-      setError(errMsg);
-    } finally {
-      setLoadingCleanDocx(false);
     }
   };
 
@@ -551,12 +581,12 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
         {/* Textarea da Transcrição com Collapse/Expand */}
         <div className="border border-slate-200 rounded-xl overflow-hidden shadow-sm bg-white">
           <div className="space-y-0">
-            <button
-              type="button"
-              onClick={() => setIsTextareaExpanded(!isTextareaExpanded)}
-              className="w-full flex items-center justify-between p-3.5 bg-slate-50 hover:bg-slate-100/80 transition-colors text-left"
-            >
-              <div className="flex items-center gap-2">
+            <div className="w-full flex items-center justify-between p-3 bg-slate-50 border-b border-slate-200">
+              <button
+                type="button"
+                onClick={() => setIsTextareaExpanded(!isTextareaExpanded)}
+                className="flex items-center gap-2 text-left hover:opacity-80 transition-opacity"
+              >
                 <span className="text-xs font-bold text-slate-700 uppercase tracking-wider">
                   Texto da Transcrição / Registro da Reunião
                 </span>
@@ -569,12 +599,40 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
                     (Vazio - nenhum documento anexado)
                   </span>
                 )}
+              </button>
+
+              <div className="flex items-center gap-2">
+                {/* Botão de Varinha Mágica para coletar dados cadastrais e participantes isoladamente */}
+                <button
+                  type="button"
+                  onClick={handleExtractMetadataFromTranscript}
+                  disabled={loadingExtractMetadata || !transcript.trim()}
+                  className="flex items-center gap-1.5 px-3 py-1.5 bg-purple-50 hover:bg-purple-100/90 text-purple-700 hover:text-purple-800 border border-purple-200 rounded-lg text-xs font-bold transition-all shadow-2xs disabled:opacity-40 disabled:cursor-not-allowed cursor-pointer"
+                  title="Detectar com IA dados pendentes da obra e participantes diretamente do texto da transcrição (sem reprocessar o restante)"
+                >
+                  {loadingExtractMetadata ? (
+                    <>
+                      <Loader2 size={13} className="animate-spin text-purple-600" />
+                      <span>Identificando Dados...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Wand2 size={13} className="text-purple-600" />
+                      <span>Coletar Dados via IA</span>
+                    </>
+                  )}
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => setIsTextareaExpanded(!isTextareaExpanded)}
+                  className="flex items-center gap-1 text-xs font-semibold text-blue-600 hover:text-blue-700 px-2 py-1"
+                >
+                  <span>{isTextareaExpanded ? 'Recolher' : 'Expandir'}</span>
+                  {isTextareaExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
+                </button>
               </div>
-              <div className="flex items-center gap-1 text-xs font-semibold text-blue-600">
-                <span>{isTextareaExpanded ? 'Recolher' : 'Expandir'}</span>
-                {isTextareaExpanded ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-              </div>
-            </button>
+            </div>
 
             {isTextareaExpanded && (
               <div className="p-3 border-t border-slate-200 bg-white space-y-2">
@@ -593,10 +651,17 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
           </div>
         </div>
 
-        {error && <p className="text-red-600 text-sm bg-red-50 p-3 rounded-lg border border-red-200">{error}</p>}
+        {extractSuccessMsg && (
+          <div className="p-3 bg-emerald-50 border border-emerald-200 rounded-lg text-xs font-semibold text-emerald-800 flex items-center gap-2 animate-in fade-in">
+            <CheckCircle2 size={15} className="text-emerald-600 shrink-0" />
+            {extractSuccessMsg}
+          </div>
+        )}
+
+        {error && <p className="text-red-600 text-sm bg-red-50 p-3 rounded-lg border border-red-200 whitespace-pre-wrap">{error}</p>}
 
         {/* Revisão Estruturada da Ata Final */}
-        {draftData && (
+        {draftData ? (
           <div className="border border-slate-200 rounded-xl overflow-hidden shadow-sm bg-white transition-all duration-200 animate-in fade-in slide-in-from-top-4">
             <div className="w-full flex items-center justify-between p-4 bg-slate-50 border-b border-slate-200">
               <div className="flex items-center gap-2.5">
@@ -606,7 +671,7 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
                     Revisão Estruturada dos Campos do Template
                   </h3>
                   <p className="text-xs text-slate-500">
-                    {draftData.agreedItems?.length || 0} itens acordados • {draftData.pendingItems?.length || 0} pendências
+                    {draftData.agreedItems?.length || 0} itens acordados • {draftData.pendingItems?.length || 0} pendências • {(state.abertura?.participantes || draftData.participantes || []).length} participantes identificados
                   </p>
                 </div>
               </div>
@@ -883,13 +948,19 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
                   <textarea 
                     value={draftData.notes || ''}
                     onChange={(e) => {
-                      const nextData = { ...draftData, notes: e.target.value };
+                      const nextData = { ...draftData, notes: e.target.value, resumo: e.target.value };
                       setDraftData(nextData);
-                      updateState({ finalAtaData: nextData });
+                      updateState({ 
+                        finalAtaData: nextData,
+                        abertura: state.abertura ? {
+                          ...state.abertura,
+                          resumoExecutivo: e.target.value
+                        } : state.abertura
+                      });
                     }}
                     placeholder="Resumo executivo dos pontos acordados e encaminhamentos gerais..."
-                    rows={3}
-                    className="w-full bg-white border border-slate-200 rounded p-3 text-xs text-slate-800 focus:outline-none focus:border-blue-500 min-h-[90px] resize-y leading-relaxed"
+                    rows={4}
+                    className="w-full bg-white border border-slate-200 rounded p-3 text-xs text-slate-800 focus:outline-none focus:border-blue-500 min-h-[100px] resize-y leading-relaxed font-sans"
                   />
                 </div>
 
@@ -901,6 +972,20 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
                 )}
               </div>
             )}
+          </div>
+        ) : (
+          <div className="border border-dashed border-slate-300 rounded-xl p-6 bg-slate-50/70 text-center space-y-3 animate-in fade-in">
+            <div className="mx-auto w-10 h-10 rounded-full bg-blue-100 flex items-center justify-center text-blue-600 shadow-2xs">
+              <Sparkles size={20} />
+            </div>
+            <div className="max-w-md mx-auto space-y-1">
+              <h4 className="text-sm font-bold text-slate-800">
+                Aguardando Síntese das Deliberações
+              </h4>
+              <p className="text-xs text-slate-500 leading-relaxed">
+                Clique no botão <strong>"Sintetizar com IA"</strong> abaixo para cruzar o Checklist da Obra, as Divergências da Proposta e a Transcrição da Reunião. Os campos estruturados de acordos, pendências e resumo executivo serão habilitados aqui após a síntese.
+              </p>
+            </div>
           </div>
         )}
       </div>
@@ -945,15 +1030,19 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
 
         {/* SOMENTE APÓS a transcrição ser analisada (draftData existente): Botão de Gerar e Baixar Ata Final renderizado diretamente ABAIXO */}
         {draftData && (
-          <div className="pt-4 border-t border-slate-100 space-y-3 bg-blue-50/60 p-4 rounded-xl border border-blue-100 animate-in fade-in slide-in-from-top-2">
+          <div className={`pt-4 border-t border-slate-100 space-y-3 p-4 rounded-xl border animate-in fade-in slide-in-from-top-2 ${state.finalAtaGenerated ? 'bg-emerald-50/70 border-emerald-200' : 'bg-blue-50/60 border-blue-100'}`}>
             <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
               <div className="text-xs text-slate-600 space-y-0.5">
                 <p className="font-bold text-slate-800 flex items-center gap-1.5">
-                  <CheckCircle2 size={16} className="text-emerald-600 shrink-0" />
-                  Transcrição e Contextos Analisados com Sucesso
+                  <CheckCircle2 size={16} className={`shrink-0 ${state.finalAtaGenerated ? 'text-emerald-600' : 'text-blue-600'}`} />
+                  {state.finalAtaGenerated
+                    ? 'Arquivo Word da Ata Final gerado com sucesso!'
+                    : 'Insumos para a versão final da Ata gerados com sucesso'}
                 </p>
                 <p className="text-[11px] text-slate-500">
-                  Os dados foram estruturados. Gere a versão interna com pendências em vermelho ou exporte a versão limpa para o fornecedor.
+                  {state.finalAtaGenerated
+                    ? 'O documento oficial .docx foi exportado. Você pode baixar novamente ou revisar os campos sempre que desejar.'
+                    : 'Os dados foram estruturados e revisados. Clique no botão ao lado para gerar e baixar a Ata Final (.docx).'}
                 </p>
               </div>
 
@@ -961,9 +1050,9 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
                 <button
                   type="button"
                   onClick={generateFinalDocx}
-                  disabled={loadingDocx || loadingCleanDocx}
+                  disabled={loadingDocx || loadingDraft}
                   className="flex items-center justify-center gap-2 px-5 py-3 text-xs font-bold text-white bg-blue-600 hover:bg-blue-700 rounded-lg uppercase tracking-tight shadow-md shadow-blue-200 disabled:bg-slate-300 disabled:text-slate-500 disabled:shadow-none transition-all shrink-0"
-                  title="Gera a versão interna completa com itens pendentes destacados em vermelho (C00000)"
+                  title="Gera a ata final preenchida no formato DOCX"
                 >
                   {loadingDocx ? (
                     <>
@@ -973,61 +1062,12 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
                   ) : (
                     <>
                       <FileDown size={16} />
-                      Ata Final Interna (.docx)
-                    </>
-                  )}
-                </button>
-
-                <button
-                  type="button"
-                  onClick={generateCleanDocx}
-                  disabled={loadingDocx || loadingCleanDocx}
-                  className="flex items-center justify-center gap-2 px-5 py-3 text-xs font-bold text-emerald-800 bg-emerald-100 hover:bg-emerald-200 border border-emerald-300 rounded-lg uppercase tracking-tight shadow-sm disabled:bg-slate-200 disabled:text-slate-400 disabled:border-transparent transition-all shrink-0"
-                  title="Gera a versão limpa do fornecedor (sem nenhum item em vermelho ou pendência)"
-                >
-                  {loadingCleanDocx ? (
-                    <>
-                      <Loader2 size={16} className="animate-spin" />
-                      Higienizando...
-                    </>
-                  ) : (
-                    <>
-                      <FileDown size={16} />
-                      Versão Limpa (Fornecedor)
+                      {state.finalAtaGenerated ? 'Baixar Novamente (.docx)' : 'Baixar Ata Final (.docx)'}
                     </>
                   )}
                 </button>
               </div>
             </div>
-
-            {cleanExportErrors && (
-              <div className="p-3.5 bg-amber-50 border border-amber-200 rounded-lg text-xs text-amber-900 space-y-1.5 animate-in fade-in">
-                <div className="flex items-center gap-2 font-bold text-amber-800">
-                  <AlertCircle size={15} className="text-amber-600 shrink-0" />
-                  <span>Exportação Limpa Bloqueada: Resolva as pendências abaixo</span>
-                </div>
-                {cleanExportErrors.topicosPendentes?.length > 0 && (
-                  <div>
-                    <span className="font-semibold">Tópicos com situação PENDENTE:</span>
-                    <ul className="list-disc list-inside ml-2 text-amber-800">
-                      {cleanExportErrors.topicosPendentes.map(t => (
-                        <li key={t.topicoId}>{t.titulo}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-                {cleanExportErrors.camposADefinir?.length > 0 && (
-                  <div>
-                    <span className="font-semibold">Marcadores [A DEFINIR] restantes:</span>
-                    <ul className="list-disc list-inside ml-2 text-amber-800">
-                      {cleanExportErrors.camposADefinir.map(c => (
-                        <li key={c.topicoId}>{c.titulo}: {c.campos.join(', ')}</li>
-                      ))}
-                    </ul>
-                  </div>
-                )}
-              </div>
-            )}
           </div>
         )}
       </div>

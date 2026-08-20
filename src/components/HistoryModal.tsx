@@ -16,11 +16,13 @@ import {
   Sparkles,
   ArrowRight,
   User,
-  Shield
+  Shield,
+  Share2
 } from 'lucide-react';
 import { loadMeetings, deleteMeeting } from '../lib/db';
 import { useAuth } from '../contexts/AuthContext';
 import { safeFetchBlob } from '../utils/api';
+import { ShareMeetingModal } from './ShareMeetingModal';
 
 interface Props {
   isOpen: boolean;
@@ -39,6 +41,7 @@ export function HistoryModal({ isOpen, onClose, onLoadMeeting }: Props) {
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState<'ALL' | 'DRAFT' | 'PRE_ATA_GENERATED' | 'FINAL_ATA_GENERATED'>('ALL');
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null);
+  const [sharingMeeting, setSharingMeeting] = useState<any | null>(null);
 
   const fetchMeetings = async () => {
     setLoading(true);
@@ -363,6 +366,15 @@ export function HistoryModal({ isOpen, onClose, onLoadMeeting }: Props) {
                         </button>
                       )}
 
+                      <button 
+                        onClick={() => setSharingMeeting(m)}
+                        className="flex items-center gap-1 text-xs text-slate-600 hover:text-blue-600 bg-slate-100 hover:bg-blue-50 border border-slate-200 px-2.5 py-1.5 rounded-lg transition-colors cursor-pointer"
+                        title="Compartilhar reunião"
+                      >
+                        <Share2 size={13} />
+                        Compartilhar
+                      </button>
+
                       {deleteConfirmId === m.id ? (
                         <div className="flex items-center gap-1.5 bg-red-50 p-1 rounded-lg border border-red-200 animate-in fade-in">
                           <span className="text-[11px] text-red-700 font-medium px-1">Excluir?</span>
@@ -417,6 +429,13 @@ export function HistoryModal({ isOpen, onClose, onLoadMeeting }: Props) {
         </div>
 
       </div>
+
+      <ShareMeetingModal
+        isOpen={Boolean(sharingMeeting)}
+        onClose={() => setSharingMeeting(null)}
+        meeting={sharingMeeting}
+        onShared={() => fetchMeetings()}
+      />
     </div>
   );
 }

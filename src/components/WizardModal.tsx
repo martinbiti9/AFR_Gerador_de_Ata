@@ -172,7 +172,8 @@ export function WizardModal({ isOpen, onClose, state, updateState }: Props) {
         body: formData
       });
       
-      const newText = transcriptText ? transcriptText + '\n\n' + data.text : data.text;
+      const extracted = (typeof data === 'string' ? data : (data?.text || (data as any)?.result || (data as any)?.data || '')).trim();
+      const newText = transcriptText ? transcriptText + '\n\n' + extracted : extracted;
       setTranscriptText(newText);
       updateState({ finalAtaText: newText });
 

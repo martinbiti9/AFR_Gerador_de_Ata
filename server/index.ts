@@ -16,23 +16,51 @@ import { renderAtaDocument, RenderValidationError, DocxRenderError } from './ren
 import { gerarVersaoLimpaDocx, validarAtaParaExportacaoLimpa } from './render/cleanVersion';
 import {
   getTemplateVersionsFromDb,
+  getAllTemplateVersionsFromDb,
   getActiveTemplateFromDb,
   saveTemplateDocumentToDb,
   rollbackTemplateInDb,
   updateTemplateSchemaInDb,
   deleteTemplateFromDb,
-  buildDefaultSchema
+  buildDefaultSchema,
+  updateTemplateInspectionInDb,
+  invalidateActiveTemplateCache
 } from './templateRepository';
 import { TemplateSchemaZod } from './types/template';
 import { addLog, getLogs, clearLogs } from './logger';
+
+function buildVerificationErrorMessage(report: any): string {
+  const parts = [];
+  if (report.missingFields?.length > 0) {
+    parts.push(`Campos obrigatórios não preenchidos: ${report.missingFields.join(', ')}`);
+  }
+  if (report.unresolvedPlaceholders?.length > 0) {
+    parts.push(`Placeholders não resolvidos: ${report.unresolvedPlaceholders.join(', ')}`);
+  }
+  if (report.structuralErrors?.length > 0) {
+    parts.push(`Erros estruturais: ${report.structuralErrors.join('; ')}`);
+  }
+  if (report.loopVerification && !report.loopVerification.verified) {
+    parts.push(`Tabela corrompida (esperado ${report.loopVerification.expectedRows} linhas, encontrado ${report.loopVerification.foundRows})`);
+  }
+  
+  if (parts.length > 0) {
+    return `Documento reprovado no relatório de verificação de qualidade (V1-V8):\n• ${parts.join('\n• ')}`;
+  }
+  return 'Documento reprovado no relatório de verificação de qualidade (V1-V8).';
+}
+
 import {
   saveMeetingToStore,
   getMeetingsFromStore,
   getMeetingById,
   deleteMeetingFromStore,
   saveAtaState,
-  getAnalysisProgress
+  getAnalysisProgress,
+  shareMeetingInStore,
+  getMeetingByShareToken
 } from './meetingStore';
+import { prepareUploadedFilesForAI, extractTextFromFiles } from './fileProcessor';
 import {
   getActiveModels,
   updateActiveModels,
@@ -215,7 +243,7 @@ async function startServer() {
         return res.status(400).json({ error: 'Nenhum arquivo enviado para extração de texto.' });
       }
 
-      const extractedText = await extractTextFromUploadedFiles(files);
+      const extractedText = await extractTextFromFiles(files);
       res.json({ success: true, text: extractedText });
     } catch (error: any) {
       console.error('Error extracting text from files:', error);
@@ -226,18 +254,34 @@ async function startServer() {
   app.post('/api/extract-metadata', requireAuth, requirePasswordChanged, upload.array('files'), async (req, res) => {
     try {
       const files = req.files as Express.Multer.File[];
-      const inlineDataFiles = (files || []).map(f => ({
-        inlineData: {
-          data: f.buffer.toString('base64'),
-          mimeType: f.mimetype || 'application/pdf'
-        }
-      }));
-
-      const metadata = await extractDocumentMetadata(inlineDataFiles);
-      res.json({ success: true, metadata: metadata.metadata });
+      if (!files || files.length === 0) {
+        return res.json({ success: true, metadata: {} });
+      }
+      
+      const aiContentParts = await prepareUploadedFilesForAI(files);
+      const result = await extractDocumentMetadata(aiContentParts);
+      const metadata = result?.metadata || result || {};
+      res.json({ success: true, metadata });
     } catch (error: any) {
       console.error('Error extracting metadata:', error);
       res.status(500).json({ error: error.message || 'Erro ao extrair metadados da obra.' });
+    }
+  });
+
+  app.post('/api/extract-metadata-text', requireAuth, requirePasswordChanged, async (req, res) => {
+    try {
+      const { text } = req.body;
+      if (!text || !text.trim()) {
+        return res.status(400).json({ error: 'Nenhum texto de transcrição fornecido.' });
+      }
+      
+      const aiContentParts = [{ text: text.trim() }];
+      const result = await extractDocumentMetadata(aiContentParts);
+      const metadata = result?.metadata || result || {};
+      res.json({ success: true, metadata });
+    } catch (error: any) {
+      console.error('Error extracting metadata from text:', error);
+      res.status(500).json({ error: error.message || 'Erro ao extrair metadados da transcrição.' });
     }
   });
 
@@ -257,15 +301,9 @@ async function startServer() {
         return res.status(400).json({ error: 'Nenhum arquivo enviado.' });
       }
 
-      const inlineDataFiles = files.map(f => ({
-        inlineData: {
-          data: f.buffer.toString('base64'),
-          mimeType: f.mimetype || 'application/pdf'
-        }
-      }));
-
+      const aiContentParts = await prepareUploadedFilesForAI(files);
       const meetingId = (req.body?.meetingId || req.query?.meetingId) as string | undefined;
-      const result = await analyzeChecklist(inlineDataFiles, meetingId);
+      const result = await analyzeChecklist(aiContentParts, meetingId);
       res.json(result);
     } catch (error: any) {
       console.error('Error analyzing checklist:', error);
@@ -295,15 +333,9 @@ async function startServer() {
       }
       const checklist = JSON.parse(checklistStr);
 
-      const inlineDataFiles = files.map(f => ({
-        inlineData: {
-          data: f.buffer.toString('base64'),
-          mimeType: f.mimetype || 'application/pdf'
-        }
-      }));
-      
+      const aiContentParts = await prepareUploadedFilesForAI(files);
       const meetingId = (req.body?.meetingId || req.query?.meetingId) as string | undefined;
-      const result = await analyzeProposal(inlineDataFiles, checklist, meetingId);
+      const result = await analyzeProposal(aiContentParts, checklist, meetingId);
       res.json(result);
     } catch (error: any) {
       console.error('Error analyzing proposal:', error);
@@ -353,7 +385,7 @@ async function startServer() {
 
       if (!report.isVerified && !isForce) {
         return res.status(422).json({
-          error: 'Documento reprovado no relatório de verificação de qualidade (V1-V8).',
+          error: buildVerificationErrorMessage(report),
           code: 'DOCUMENT_VERIFICATION_FAILED',
           report
         });
@@ -416,7 +448,7 @@ async function startServer() {
 
       if (!report.isVerified && !isForce) {
         return res.status(422).json({
-          error: 'Documento reprovado no relatório de verificação de qualidade (V1-V8).',
+          error: buildVerificationErrorMessage(report),
           code: 'DOCUMENT_VERIFICATION_FAILED',
           report
         });
@@ -493,7 +525,7 @@ async function startServer() {
 
       if (!report.isVerified && !isForce) {
         return res.status(422).json({
-          error: 'Documento reprovado no relatório de verificação de qualidade (V1-V8).',
+          error: buildVerificationErrorMessage(report),
           code: 'DOCUMENT_VERIFICATION_FAILED',
           report
         });
@@ -679,6 +711,35 @@ async function startServer() {
     }
   });
 
+  // Compartilhamento de Reuniões
+  app.post('/api/meetings/:id/share', requireAuth, requirePasswordChanged, async (req, res) => {
+    try {
+      const authUser = req.auth!;
+      const { shareWithEmail, isPublic } = req.body;
+      const result = await shareMeetingInStore(
+        req.params.id,
+        { shareWithEmail, isPublic },
+        { uid: authUser.uid, email: authUser.email, role: authUser.role }
+      );
+      res.json(result);
+    } catch (error: any) {
+      res.status(400).json({ error: error.message });
+    }
+  });
+
+  // Consulta de reunião compartilhada publicamente (Read-Only)
+  app.get('/api/public/share/:token', async (req, res) => {
+    try {
+      const meeting = await getMeetingByShareToken(req.params.token);
+      if (!meeting) {
+        return res.status(404).json({ error: 'Link de compartilhamento inválido ou expirado.' });
+      }
+      res.json({ success: true, meeting });
+    } catch (error: any) {
+      res.status(500).json({ error: error.message });
+    }
+  });
+
   // ================= ADMIN API ENDPOINTS =================
 
   // 1. Config: Models and Custom Prompts
@@ -760,8 +821,10 @@ async function startServer() {
       let detectedPlaceholders: string[] | undefined;
       let structureSummary: string | undefined;
       let rawTextPreview: string | undefined;
+      let rawTextFull: string | undefined;
       let tables: any[] | undefined;
       let placeholderMap: Record<string, string> | undefined;
+      let initialSchema: any | undefined;
 
       if (file) {
         const isDocx = file.originalname.toLowerCase().endsWith('.docx') || 
@@ -780,13 +843,15 @@ async function startServer() {
         detectedPlaceholders = inspection.detectedPlaceholders;
         structureSummary = inspection.structureSummary;
         rawTextPreview = inspection.rawTextPreview;
+        rawTextFull = inspection.rawTextFull;
         tables = inspection.tables;
         placeholderMap = inspection.placeholderMap;
+        initialSchema = inspection.initialSchema;
       }
 
       const templateName = name || (originalFileName ? originalFileName.replace(/\.docx$/i, '') : 'Template Personalizado');
       const tempId = `template-${Date.now()}`;
-      const generatedSchema = buildDefaultSchema(tempId, detectedPlaceholders || [], tables || []);
+      const generatedSchema = initialSchema || buildDefaultSchema(tempId, detectedPlaceholders || [], tables || []);
       if (placeholderMap) {
         generatedSchema.placeholderMap = placeholderMap;
       }
@@ -808,12 +873,43 @@ async function startServer() {
         structureSummary,
         tables,
         rawTextPreview,
+        rawTextFull,
         schema: generatedSchema
       });
 
       res.json({ success: true, template: saved });
     } catch (error: any) {
       console.error('Error creating template version:', error);
+      res.status(500).json({ error: error.message });
+    }
+  });
+
+  // Re-inspection Endpoint
+  app.post('/api/admin/templates/:id/reinspect', requireAuth, requireAdmin, async (req, res) => {
+    try {
+      const { versions } = await getAllTemplateVersionsFromDb();
+      const target = versions.find(v => v.id === req.params.id);
+      if (!target || !target.docxBlobBase64) {
+        return res.status(404).json({ error: 'Template não encontrado ou sem binário DOCX anexado.' });
+      }
+
+      const buffer = Buffer.from(target.docxBlobBase64, 'base64');
+      const inspection = await parseDocxTemplate(buffer);
+
+      await updateTemplateInspectionInDb(target.id, inspection);
+      invalidateActiveTemplateCache();
+
+      const totalRows = (inspection.tables || []).reduce((acc, t) => acc + (t.rowCount || t.rows?.length || 0), 0);
+      const chars = inspection.rawTextFull ? inspection.rawTextFull.length : (inspection.rawTextPreview || '').length;
+
+      res.json({
+        success: true,
+        tablesCount: inspection.tablesCount || inspection.tables?.length || 0,
+        totalRows,
+        chars
+      });
+    } catch (error: any) {
+      console.error('Error reinspecting template:', error);
       res.status(500).json({ error: error.message });
     }
   });
