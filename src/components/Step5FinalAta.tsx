@@ -505,7 +505,7 @@ export function Step5FinalAta({ state, updateState, onMetadataDetected, onNaviga
       </div>
 
       <div className="space-y-4">
-        {/* Importar Transcrição / Áudio / Documentos */}
+        {/* Importar Transcrição / Documentos */}
         <div className="border border-slate-200 rounded-xl p-4 bg-slate-50/50 space-y-3">
           <div className="flex items-center justify-between">
             <span className="text-xs font-bold text-slate-700 uppercase tracking-wider flex items-center gap-1.5">

@@ -195,3 +195,13 @@ Execução: `npm test` (`tsx --test tests/render.regression.test.ts`)
 - **Erro**: DOCX de saída não deve conter marcadores não substituídos: XXX (true), [xx] (true), R$ XXXX (true)
 - **Modo**: BASELINE (Capturado para refatoração nos prompts 03-05)
 
+
+### [2026-08-20T02:37:23.133Z] Defeito: Participantes reais renderizados
+- **Erro**: Participante informado no payload deve estar presente
+- **Modo**: STRICT (Falha Real)
+
+
+### [2026-08-20T02:37:37.839Z] Defeito: Participantes reais renderizados
+- **Erro**: Participante informado no payload deve estar presente
+- **Modo**: STRICT (Falha Real)
+

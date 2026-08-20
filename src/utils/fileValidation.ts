@@ -3,7 +3,7 @@
  * Implementa as regras do PROMPT 10:
  * - Máximo de 15 MB por arquivo
  * - Máximo de 5 arquivos por envio
- * - Extensões permitidas: .pdf, .docx, .xlsx, .csv, .txt, .md, .mp3, .wav, .m4a
+ * - Extensões permitidas: .pdf, .docx, .xlsx, .csv, .txt, .md
  */
 
 export const MAX_FILE_SIZE_BYTES = 15 * 1024 * 1024; // 15 MB
@@ -15,10 +15,7 @@ export const ALLOWED_EXTENSIONS = [
   '.xlsx',
   '.csv',
   '.txt',
-  '.md',
-  '.mp3',
-  '.wav',
-  '.m4a'
+  '.md'
 ];
 
 export const ALLOWED_TEMPLATE_EXTENSIONS = ['.docx'];

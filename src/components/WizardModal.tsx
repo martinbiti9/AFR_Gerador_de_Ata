@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   X, 
   Wand2, 
@@ -70,6 +70,27 @@ export function WizardModal({ isOpen, onClose, state, updateState }: Props) {
   const checklistInputRef = useRef<HTMLInputElement>(null);
   const proposalInputRef = useRef<HTMLInputElement>(null);
   const transcriptInputRef = useRef<HTMLInputElement>(null);
+
+  // Sync with global state when opening, resetting if empty
+  useEffect(() => {
+    if (isOpen) {
+      setAbertura(state.abertura || {
+        obraCodigo: '',
+        obraNome: '',
+        assunto: '',
+        fornecedor: '',
+        servico: '',
+        rm: '',
+        cot: '',
+      });
+      setTranscriptText(state.finalAtaText || '');
+      setSonnetResult(state.sonnetAnalysis || '');
+      setChecklistFiles([]);
+      setProposalFiles([]);
+      setTranscriptFiles([]);
+      setCurrentStep(1);
+    }
+  }, [isOpen, state.abertura, state.finalAtaText, state.sonnetAnalysis]);
 
   if (!isOpen) return null;
 
@@ -545,11 +566,11 @@ export function WizardModal({ isOpen, onClose, state, updateState }: Props) {
                   <div>
                     <div className="flex items-center justify-between mb-2">
                       <span className="flex items-center gap-1.5 text-xs font-bold text-slate-800">
-                        <Sparkles size={16} className="text-purple-600" /> 3. Transcrição / Áudio
+                        <Sparkles size={16} className="text-purple-600" /> 3. Transcrição / Documentos
                       </span>
                       <span className="text-[10px] font-semibold text-slate-500 bg-slate-100 px-1.5 py-0.5 rounded">Opcional</span>
                     </div>
-                    <p className="text-[11px] text-slate-500">Anotações da reunião ou transcrição de voz gravada no Teams/Meet.</p>
+                    <p className="text-[11px] text-slate-500">Anotações ou transcrição textual da reunião.</p>
                   </div>
 
                   <div 
@@ -801,7 +822,7 @@ export function WizardModal({ isOpen, onClose, state, updateState }: Props) {
                 <textarea
                   value={transcriptText}
                   onChange={(e) => setTranscriptText(e.target.value)}
-                  placeholder="Cole aqui a transcrição de voz da reunião, pontos acordados e deliberações..."
+                  placeholder="Cole aqui a transcrição da reunião, pontos acordados e deliberações..."
                   className="w-full bg-slate-50 border border-slate-200 rounded-lg p-3 text-xs text-slate-800 focus:outline-none focus:border-purple-500 focus:bg-white transition-all min-h-[90px] resize-y"
                 />
 

@@ -1,0 +1,428 @@
+
+> react-example@0.0.0 test
+> tsx --test tests/*.test.ts tests/render.regression.test.ts
+
+TAP version 13
+# [2026-08-20T02:37:35.627Z] [INFO] [SYSTEM] Sistema de Auditoria e Logs iniciado com sucesso. 
+# [2026-08-20T02:37:35.657Z] [INFO] [DOCX] Versão Limpa do Fornecedor gerada com sucesso. Arquivos higienizados: 1 
+# Subtest: Testes da Versão Limpa do Fornecedor (cleanVersion.ts)
+    # Subtest: removerRunsVermelhos: remove apenas runs com cor C00000 e mantém runs pretos/normais
+    ok 1 - removerRunsVermelhos: remove apenas runs com cor C00000 e mantém runs pretos/normais
+      ---
+      duration_ms: 1.770031
+      type: 'test'
+      ...
+    # Subtest: removerRunsVermelhos: normaliza parágrafo esvaziado para <w:p/>
+    ok 2 - removerRunsVermelhos: normaliza parágrafo esvaziado para <w:p/>
+      ---
+      duration_ms: 0.596816
+      type: 'test'
+      ...
+    # Subtest: validarAtaParaExportacaoLimpa: bloqueia exportação se houver tópicos PENDENTE
+    ok 3 - validarAtaParaExportacaoLimpa: bloqueia exportação se houver tópicos PENDENTE
+      ---
+      duration_ms: 0.45742
+      type: 'test'
+      ...
+    # Subtest: validarAtaParaExportacaoLimpa: bloqueia se houver camposADefinir restantes
+    ok 4 - validarAtaParaExportacaoLimpa: bloqueia se houver camposADefinir restantes
+      ---
+      duration_ms: 0.280163
+      type: 'test'
+      ...
+    # Subtest: validarAtaParaExportacaoLimpa: aprova quando todos os itens estão resolvidos
+    ok 5 - validarAtaParaExportacaoLimpa: aprova quando todos os itens estão resolvidos
+      ---
+      duration_ms: 0.374301
+      type: 'test'
+      ...
+    # Subtest: gerarVersaoLimpaDocx: processa pacote DOCX e valida regra V8
+    ok 6 - gerarVersaoLimpaDocx: processa pacote DOCX e valida regra V8
+      ---
+      duration_ms: 26.581739
+      type: 'test'
+      ...
+    1..6
+ok 1 - Testes da Versão Limpa do Fornecedor (cleanVersion.ts)
+  ---
+  duration_ms: 33.487911
+  type: 'test'
+  ...
+# [2026-08-20T02:37:36.353Z] [INFO] [SYSTEM] Sistema de Auditoria e Logs iniciado com sucesso. 
+# [2026-08-20T02:37:37.665Z] [INFO] [DOCX] Template DOCX inspecionado com sucesso: 4 tags encontradas, 5 tabelas {
+#   detectedPlaceholders: [ 'ASSUNTO', 'FORNECEDOR', 'itens_reuniao', 'titulo' ],
+#   paragraphsCount: 22,
+#   tablesCount: 5,
+#   tableHeaders: [ 'A' ],
+#   inspectedTablesCount: 5
+# }
+# Subtest: Regression Suite - Template Parsing e Pipeline de Render DOCX
+    # Subtest: Inspeção do Template Oficial (5 tabelas, cabeçalho e placeholders)
+    not ok 1 - Inspeção do Template Oficial (5 tabelas, cabeçalho e placeholders)
+      ---
+      duration_ms: 1.973508
+      type: 'test'
+      location: '/app/applet/tests/render.regression.test.ts:57:11'
+      failureType: 'testCodeFailure'
+      error: 'Placeholder "CÓDIGO DA OBRA" deve estar presente nos detectedPlaceholders: [ASSUNTO, FORNECEDOR, itens_reuniao, titulo]'
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected: true
+      actual: false
+      operator: '=='
+      stack: |-
+        TestContext.<anonymous> (/app/applet/tests/render.regression.test.ts:82:14)
+        Test.runInAsyncScope (node:async_hooks:214:14)
+        Test.run (node:internal/test_runner/test:1047:25)
+        Test.start (node:internal/test_runner/test:944:17)
+        TestContext.test (node:internal/test_runner/test:373:20)
+        TestContext.<anonymous> (/app/applet/tests/render.regression.test.ts:57:11)
+        async Test.run (node:internal/test_runner/test:1054:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+      ...
+# [2026-08-20T02:37:37.801Z] [WARN] [VALIDATOR] Relatório de Verificação de Qualidade DOCX: REPROVADO (8961 bytes) {
+#   isVerified: false,
+#   foundFields: [ 'fornecedor' ],
+#   missingFields: [ 'obraCodigo' ],
+#   unresolvedPlaceholders: [ '[A INFORMAR]' ],
+#   structuralErrors: [],
+#   sampleLoopTextsChecked: 2,
+#   foundLoopCount: 2
+# }
+# [2026-08-20T02:37:37.802Z] [DEBUG] [DOCX] [debugMd:verificacoes.md] Relatório de Verificação de Qualidade DOCX (REPROVADO) {
+#   timestamp: '2026-08-20T02:37:37.802Z',
+#   secao: 'Relatório de Verificação de Qualidade DOCX (REPROVADO)',
+#   arquivo: 'verificacoes.md',
+#   dados: {
+#     isVerified: false,
+#     fileSizeBytes: 8961,
+#     foundFields: [ 'fornecedor' ],
+#     missingFields: [ 'obraCodigo' ],
+#     unresolvedPlaceholders: [ '[A INFORMAR]' ],
+#     structuralErrors: [],
+#     loopVerification: { expectedRows: 2, foundRows: 2, verified: true },
+#     timestamp: '2026-08-20T02:37:37.802Z'
+#   }
+# }
+# [2026-08-20T02:37:37.803Z] [INFO] [DOCX] Documento Ata Final gerado com sucesso (8961 bytes) {
+#   templateId: 'template-test-official',
+#   templateVersion: 1,
+#   isPreAta: false,
+#   isVerified: false,
+#   obraCodigo: 'OBRA-102',
+#   fornecedor: 'Alpha Elevadores Ltda',
+#   naoResolvidas: [ 'CÓDIGO DA OBRA', 'NOME DA OBRA', 'EXTRAIR DO FIRE FLIES' ]
+# }
+# [2026-08-20T02:37:37.838Z] [DEBUG] [DOCX] [debugMd:00_baseline.md] Defeito Baseline Detectado: Participantes reais renderizados {
+#   timestamp: '2026-08-20T02:37:37.838Z',
+#   secao: 'Defeito Baseline Detectado: Participantes reais renderizados',
+#   arquivo: '00_baseline.md',
+#   dados: {
+#     test: 'Participantes reais renderizados',
+#     error: 'Participante informado no payload deve estar presente',
+#     stack: 'AssertionError [ERR_ASSERTION]: Participante informado no payload deve estar presente\\n' +
+#       '    at <anonymous> (/app/applet/tests/render.regression.test.ts:311:14)\\n' +
+#       '    at assertOrRecord (/app/applet/tests/render.regression.test.ts:21:5)\\n' +
+#       '    at TestContext.<anonymous> (/app/applet/tests/render.regression.test.ts:310:5)\\n' +
+#       '    at async Test.run (node:internal/test_runner/test:1054:7)\\n' +
+#       '    at async TestContext.<anonymous> (/app/applet/tests/render.regression.test.ts:228:3)\\n' +
+#       '    at async Test.run (node:internal/test_runner/test:1054:7)\\n' +
+#       '    at async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)',
+#     timestamp: '2026-08-20T02:37:37.838Z'
+#   }
+# }
+    # Subtest: Verificação de Conteúdo e Integridade Estrutural no DOCX de Saída
+    not ok 2 - Verificação de Conteúdo e Integridade Estrutural no DOCX de Saída
+      ---
+      duration_ms: 35.961183
+      type: 'test'
+      location: '/app/applet/tests/render.regression.test.ts:228:11'
+      failureType: 'testCodeFailure'
+      error: 'Participante informado no payload deve estar presente'
+      code: 'ERR_ASSERTION'
+      name: 'AssertionError'
+      expected: true
+      actual: false
+      operator: '=='
+      stack: |-
+        <anonymous> (/app/applet/tests/render.regression.test.ts:311:14)
+        assertOrRecord (/app/applet/tests/render.regression.test.ts:21:5)
+        TestContext.<anonymous> (/app/applet/tests/render.regression.test.ts:310:5)
+        async Test.run (node:internal/test_runner/test:1054:7)
+        async TestContext.<anonymous> (/app/applet/tests/render.regression.test.ts:228:3)
+        async Test.run (node:internal/test_runner/test:1054:7)
+        async startSubtestAfterBootstrap (node:internal/test_runner/harness:296:3)
+      ...
+    # Subtest: Testes Unitários de Blocos OOXML, Fallback de Bullets e Limpeza de Resíduos
+    ok 3 - Testes Unitários de Blocos OOXML, Fallback de Bullets e Limpeza de Resíduos
+      ---
+      duration_ms: 1.49063
+      type: 'test'
+      ...
+# [2026-08-20T02:37:37.848Z] [WARN] [VALIDATOR] Relatório de Verificação de Qualidade DOCX: REPROVADO (550 bytes) {
+#   isVerified: false,
+#   foundFields: [ 'obraCodigo' ],
+#   missingFields: [],
+#   unresolvedPlaceholders: [ '{tagNaoResolvida}', '[A INFORMAR]', 'XXXXX', 'XXXX', 'R$ XXXXX' ],
+#   structuralErrors: [],
+#   sampleLoopTextsChecked: 1,
+#   foundLoopCount: 1
+# }
+# [2026-08-20T02:37:37.849Z] [DEBUG] [DOCX] [debugMd:verificacoes.md] Relatório de Verificação de Qualidade DOCX (REPROVADO) {
+#   timestamp: '2026-08-20T02:37:37.849Z',
+#   secao: 'Relatório de Verificação de Qualidade DOCX (REPROVADO)',
+#   arquivo: 'verificacoes.md',
+#   dados: {
+#     isVerified: false,
+#     fileSizeBytes: 550,
+#     foundFields: [ 'obraCodigo' ],
+#     missingFields: [],
+#     unresolvedPlaceholders: [
+#       '{tagNaoResolvida}',
+#       '[A INFORMAR]',
+#       'XXXXX',
+#       'XXXX',
+#       'R$ XXXXX'
+#     ],
+#     structuralErrors: [],
+#     loopVerification: { expectedRows: 1, foundRows: 1, verified: true },
+#     timestamp: '2026-08-20T02:37:37.849Z'
+#   }
+# }
+# [2026-08-20T02:37:37.853Z] [DEBUG] [DOCX] [debugMd:verificacoes.md] Relatório de Verificação de Qualidade DOCX (REPROVADO) {
+#   timestamp: '2026-08-20T02:37:37.853Z',
+#   secao: 'Relatório de Verificação de Qualidade DOCX (REPROVADO)',
+#   arquivo: 'verificacoes.md',
+#   dados: {
+#     isVerified: false,
+#     fileSizeBytes: 374,
+#     foundFields: [],
+#     missingFields: [],
+#     unresolvedPlaceholders: [
+#       '[A DEFINIR NA REUNIÃO] (presente em ata sem tópicos pendentes)'
+#     ],
+#     structuralErrors: [],
+#     loopVerification: { expectedRows: 1, foundRows: 1, verified: true },
+#     timestamp: '2026-08-20T02:37:37.853Z'
+#   }
+# }
+# [2026-08-20T02:37:37.853Z] [WARN] [VALIDATOR] Relatório de Verificação de Qualidade DOCX: REPROVADO (374 bytes) {
+#   isVerified: false,
+#   foundFields: [],
+#   missingFields: [],
+#   unresolvedPlaceholders: [ '[A DEFINIR NA REUNIÃO] (presente em ata sem tópicos pendentes)' ],
+#   structuralErrors: [],
+#   sampleLoopTextsChecked: 1,
+#   foundLoopCount: 1
+# }
+# [2026-08-20T02:37:37.856Z] [WARN] [VALIDATOR] Relatório de Verificação de Qualidade DOCX: REPROVADO (467 bytes) {
+#   isVerified: false,
+#   foundFields: [],
+#   missingFields: [],
+#   unresolvedPlaceholders: [],
+#   structuralErrors: [
+#     'Célula de tabela <w:tc> sem parágrafo filho <w:p> encontrada em word/document.xml'
+#   ],
+#   sampleLoopTextsChecked: 0,
+#   foundLoopCount: 0
+# }
+# [2026-08-20T02:37:37.857Z] [DEBUG] [DOCX] [debugMd:verificacoes.md] Relatório de Verificação de Qualidade DOCX (REPROVADO) {
+#   timestamp: '2026-08-20T02:37:37.857Z',
+#   secao: 'Relatório de Verificação de Qualidade DOCX (REPROVADO)',
+#   arquivo: 'verificacoes.md',
+#   dados: {
+#     isVerified: false,
+#     fileSizeBytes: 467,
+#     foundFields: [],
+#     missingFields: [],
+#     unresolvedPlaceholders: [],
+#     structuralErrors: [
+#       'Célula de tabela <w:tc> sem parágrafo filho <w:p> encontrada em word/document.xml'
+#     ],
+#     loopVerification: { expectedRows: 0, foundRows: 0, verified: true },
+#     timestamp: '2026-08-20T02:37:37.857Z'
+#   }
+# }
+# [2026-08-20T02:37:37.860Z] [DEBUG] [DOCX] [debugMd:verificacoes.md] Relatório de Verificação de Qualidade DOCX (REPROVADO) {
+#   timestamp: '2026-08-20T02:37:37.860Z',
+#   secao: 'Relatório de Verificação de Qualidade DOCX (REPROVADO)',
+#   arquivo: 'verificacoes.md',
+#   dados: {
+#     isVerified: false,
+#     fileSizeBytes: 500,
+#     foundFields: [ 'obraCodigo', 'fornecedor' ],
+#     missingFields: [],
+#     unresolvedPlaceholders: [],
+#     structuralErrors: [],
+#     loopVerification: { expectedRows: 2, foundRows: 0, verified: false },
+#     timestamp: '2026-08-20T02:37:37.860Z'
+#   }
+# }
+# [2026-08-20T02:37:37.860Z] [WARN] [VALIDATOR] Relatório de Verificação de Qualidade DOCX: REPROVADO (500 bytes) {
+#   isVerified: false,
+#   foundFields: [ 'obraCodigo', 'fornecedor' ],
+#   missingFields: [],
+#   unresolvedPlaceholders: [],
+#   structuralErrors: [],
+#   sampleLoopTextsChecked: 2,
+#   foundLoopCount: 0
+# }
+# [2026-08-20T02:37:37.864Z] [INFO] [VALIDATOR] Relatório de Verificação de Qualidade DOCX: APROVADO (512 bytes) {
+#   isVerified: true,
+#   foundFields: [ 'obraCodigo', 'fornecedor' ],
+#   missingFields: [],
+#   unresolvedPlaceholders: [],
+#   structuralErrors: [],
+#   sampleLoopTextsChecked: 1,
+#   foundLoopCount: 1
+# }
+# [2026-08-20T02:37:37.864Z] [DEBUG] [DOCX] [debugMd:verificacoes.md] Relatório de Verificação de Qualidade DOCX (APROVADO) {
+#   timestamp: '2026-08-20T02:37:37.864Z',
+#   secao: 'Relatório de Verificação de Qualidade DOCX (APROVADO)',
+#   arquivo: 'verificacoes.md',
+#   dados: {
+#     isVerified: true,
+#     fileSizeBytes: 512,
+#     foundFields: [ 'obraCodigo', 'fornecedor' ],
+#     missingFields: [],
+#     unresolvedPlaceholders: [],
+#     structuralErrors: [],
+#     loopVerification: { expectedRows: 1, foundRows: 1, verified: true },
+#     timestamp: '2026-08-20T02:37:37.864Z'
+#   }
+# }
+    # Subtest: PROMPT 09: Verificação Ampliada e Validador Bloqueante (verifyGeneratedDocx)
+    ok 4 - PROMPT 09: Verificação Ampliada e Validador Bloqueante (verifyGeneratedDocx)
+      ---
+      duration_ms: 22.625183
+      type: 'test'
+      ...
+    1..4
+not ok 2 - Regression Suite - Template Parsing e Pipeline de Render DOCX
+  ---
+  duration_ms: 292.968897
+  type: 'test'
+  location: '/app/applet/tests/render.regression.test.ts:48:1'
+  failureType: 'subtestsFailed'
+  error: '2 subtests failed'
+  code: 'ERR_TEST_FAILURE'
+  ...
+# Subtest: Validação de Limites de Upload no Frontend (PROMPT 10)
+    # Subtest: Rejeita quando nenhum arquivo é selecionado
+    ok 1 - Rejeita quando nenhum arquivo é selecionado
+      ---
+      duration_ms: 1.216119
+      type: 'test'
+      ...
+    # Subtest: Rejeita quando excede 5 arquivos
+    ok 2 - Rejeita quando excede 5 arquivos
+      ---
+      duration_ms: 0.236054
+      type: 'test'
+      ...
+    # Subtest: Rejeita arquivo maior que 15 MB
+    ok 3 - Rejeita arquivo maior que 15 MB
+      ---
+      duration_ms: 0.222067
+      type: 'test'
+      ...
+    # Subtest: Rejeita arquivo com extensão não autorizada (.exe, .zip, etc.)
+    ok 4 - Rejeita arquivo com extensão não autorizada (.exe, .zip, etc.)
+      ---
+      duration_ms: 0.322422
+      type: 'test'
+      ...
+    # Subtest: Aprova arquivos válidos dentro dos limites (.pdf, .docx, .xlsx, .csv, .txt, .md, .mp3, .wav, .m4a)
+    ok 5 - Aprova arquivos válidos dentro dos limites (.pdf, .docx, .xlsx, .csv, .txt, .md, .mp3, .wav, .m4a)
+      ---
+      duration_ms: 0.218937
+      type: 'test'
+      ...
+    # Subtest: Validação de template do Word restringe a .docx
+    ok 6 - Validação de template do Word restringe a .docx
+      ---
+      duration_ms: 0.309024
+      type: 'test'
+      ...
+    1..6
+ok 3 - Validação de Limites de Upload no Frontend (PROMPT 10)
+  ---
+  duration_ms: 4.55852
+  type: 'test'
+  ...
+# [2026-08-20T02:37:38.426Z] [INFO] [SYSTEM] Sistema de Auditoria e Logs iniciado com sucesso. 
+# [2026-08-20T02:37:38.442Z] [WARN] [VALIDATOR] [V1] Tópico "Critério de Medição" marcado como ACORDADO sem âncora de transcrição. Rebaixado para PENDENTE. { topicoId: 't1', titulo: 'Critério de Medição' }
+# [2026-08-20T02:37:38.446Z] [WARN] [VALIDATOR] [V2] Âncora "Aceitamos a retenção contratual de 10% sem ressalvas" do tópico "Retenção de Garantia" não encontrada na transcrição. Rebaixado para PENDENTE. {
+#   topicoId: 't3',
+#   titulo: 'Retenção de Garantia',
+#   ancora: 'Aceitamos a retenção contratual de 10% sem ressalvas'
+# }
+# [2026-08-20T02:37:38.448Z] [WARN] [VALIDATOR] [V3] Conflito de integridade: tokens numéricos não encontrados nas fontes: 4.500.000,00, 18%, 28/02/2026, 18, 28, 2026 {
+#   divergencias: [ '4.500.000,00', '18%', '28/02/2026', '18', '28', '2026' ],
+#   textoAta: 'O valor total acordado foi de R$ 4.500.000,00 com taxa de 18% e entrega até 28/02/2026.'
+# }
+# [2026-08-20T02:37:38.450Z] [WARN] [VALIDATOR] [V1] Tópico "Tópico 2 Acordado Inválido Sem Âncora" marcado como ACORDADO sem âncora de transcrição. Rebaixado para PENDENTE. { topicoId: 't2', titulo: 'Tópico 2 Acordado Inválido Sem Âncora' }
+# Subtest: Validações V1, V2 e V3 do Motor AtaState
+    # Subtest: V1: ACORDADO sem âncora deve ser rebaixado para PENDENTE
+    ok 1 - V1: ACORDADO sem âncora deve ser rebaixado para PENDENTE
+      ---
+      duration_ms: 1.958859
+      type: 'test'
+      ...
+    # Subtest: V1: ACORDADO com âncora deve permanecer ACORDADO
+    ok 2 - V1: ACORDADO com âncora deve permanecer ACORDADO
+      ---
+      duration_ms: 0.272059
+      type: 'test'
+      ...
+    # Subtest: V2: Âncora não encontrada literalmente na transcrição normalizada rebaixa para PENDENTE
+    ok 3 - V2: Âncora não encontrada literalmente na transcrição normalizada rebaixa para PENDENTE
+      ---
+      duration_ms: 0.934731
+      type: 'test'
+      ...
+    # Subtest: V2: Âncora encontrada com variação de espaços e caixa mantém ACORDADO
+    ok 4 - V2: Âncora encontrada com variação de espaços e caixa mantém ACORDADO
+      ---
+      duration_ms: 0.285108
+      type: 'test'
+      ...
+    # Subtest: V3: Detecta números/valores monetários/datas no textoAta ausentes nas fontes
+    ok 5 - V3: Detecta números/valores monetários/datas no textoAta ausentes nas fontes
+      ---
+      duration_ms: 1.870012
+      type: 'test'
+      ...
+    # Subtest: V3: Aprova quando todos os valores constam nas fontes documentais
+    ok 6 - V3: Aprova quando todos os valores constam nas fontes documentais
+      ---
+      duration_ms: 0.311964
+      type: 'test'
+      ...
+    # Subtest: Pipeline consolidado validarTopicosAtaState
+    ok 7 - Pipeline consolidado validarTopicosAtaState
+      ---
+      duration_ms: 0.675929
+      type: 'test'
+      ...
+    # Subtest: PROMPT 07: Versões semânticas de prompt e rastreador de progresso
+    ok 8 - PROMPT 07: Versões semânticas de prompt e rastreador de progresso
+      ---
+      duration_ms: 1583.957558
+      type: 'test'
+      ...
+    1..8
+ok 4 - Validações V1, V2 e V3 do Motor AtaState
+  ---
+  duration_ms: 1594.04718
+  type: 'test'
+  ...
+1..4
+# tests 28
+# suites 0
+# pass 25
+# fail 3
+# cancelled 0
+# skipped 0
+# todo 0
+# duration_ms 4795.683569

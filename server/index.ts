@@ -47,7 +47,7 @@ import {
   requirePasswordChanged,
 } from './auth';
 
-const ALLOWED_UPLOAD_EXTENSIONS = ['.pdf', '.docx', '.xlsx', '.csv', '.txt', '.md', '.mp3', '.wav', '.m4a'];
+const ALLOWED_UPLOAD_EXTENSIONS = ['.pdf', '.docx', '.xlsx', '.csv', '.txt', '.md'];
 
 const upload = multer({ 
   storage: multer.memoryStorage(),

@@ -277,8 +277,10 @@ Sua missão é realizar a LEITURA, EXTRAÇÃO DE PREMISSAS E ANÁLISE DE CONFORM
 LOTE ${batchNumber} de ${totalBatches}:
 ${batchTopicsPrompt}
 
-CRÍTICO - ENQUADRAMENTO DAS PREMISSAS NO TEMPLATE:
+CRÍTICO - PREENCHIMENTO E ENQUADRAMENTO NO TEMPLATE:
 Você DEVE utilizar a estrutura, seções e vocabulário do TEMPLATE DOCX OFICIAL ATIVO como parâmetro de enquadramento.
+É vital que você extraia dados para preencher adequadamente o template original em TODOS os campos cabíveis, gerando artefatos completos.
+Não invente itens ou grupos de informações não existentes no material fonte. Se encontrar pendências importantes para a contratação de serviços e equipamentos em construção civil, apresente as mesmas de forma clara e explícita nas respostas.
 
 ${templateContext}
 
@@ -447,6 +449,11 @@ export async function analyzeProposal(
 
   const systemInstruction = `Você é um Engenheiro Especialista em Análise de Propostas e Negociação de Contratos de Construção Civil da Afonso França Engenharia.
 Sua missão é confrontar a Proposta Comercial e Técnica do fornecedor com o Check List de Regras da Obra previamente aprovado, identificando divergências, omissões, ressalvas e condições não atendidas.
+
+CRITÉRIOS DE QUALIDADE:
+1. Preencha adequadamente as necessidades do template original (via metadados/divergências) em todos os campos contidos, gerando artefatos completos.
+2. Quando encontradas pendências importantes para a contratação de serviços e equipamentos em construção civil, as mesmas devem ser apresentadas de forma CLARA e EXPLÍCITA.
+3. Não invente itens ou grupos de informações não existentes na proposta ou no Check List.
 
 ${templateContext}
 
@@ -768,9 +775,11 @@ DADOS DA CONTRATAÇÃO:
 - Pacote / Serviço: ${abertura?.servico || 'Serviços de Engenharia'}
 - RM / Cotação: RM ${abertura?.rm || 'S/N'} • COT ${abertura?.cot || 'S/N'}
 
-REGRAS RÍGIDAS DE INTEGRIDADE (PROMPTS 06 & 07):
-1. NUNCA invente valores, prazos, participantes ou datas que não estejam presentes nos documentos fonte.
-2. Cada tópico analisado deve ter sua situação classificada exatamente como:
+REGRAS RÍGIDAS DE INTEGRIDADE E QUALIDADE (PROMPTS 06 & 07):
+1. NUNCA invente valores, prazos, participantes, itens ou grupos de informações não existentes na ata ou nos documentos fonte. Limite-se estritamente ao que foi discutido e documentado.
+2. Preencha adequadamente o template original em todos os campos contidos, garantindo o maior nível de completude do artefato.
+3. Quando forem encontradas pendências importantes para a contratação de serviços e equipamentos em construção civil, apresente-as de forma CLARA e EXPLÍCITA (marcando o item como PENDENTE).
+4. Cada tópico analisado deve ter sua situação classificada exatamente como:
    - "ACORDADO": O item foi expressamente deliberado e acordado na reunião. É OBRIGATÓRIO fornecer "ancoraTranscricao" contendo citação literal ou trecho comprovatório da transcrição.
    - "PENDENTE": O item possui ressalva, divergência ou documentação pendente de envio.
    - "MANTIDO_PADRAO": O item do checklist/template não foi modificado na reunião e mantém o padrão da construtora.
@@ -1085,6 +1094,7 @@ Sua missão é inspecionar os arquivos fornecidos e extrair todos os metadados c
 - prazosCronograma: Objeto com prazos de mobilização, projeto, execução, entrega e comissionamento.
 - resumoExecutivo: Resumo geral da contratação e dos alinhamentos.
 
+CRÍTICO: Nunca preencha resultados com 'null'. Se não encontrar a informação, preencha com string vazia "".
 ${templateContext}`;
 
   const promptText = `Extraia todos os metadados de obra, fornecedor, serviço e cotação encontrados nos documentos.`;
@@ -1168,15 +1178,11 @@ export async function extractTextFromUploadedFiles(files: Express.Multer.File[])
       let resolvedMime = mimeType;
       if (!resolvedMime || resolvedMime === 'application/octet-stream') {
         if (lowerName.endsWith('.pdf')) resolvedMime = 'application/pdf';
-        else if (lowerName.endsWith('.mp3')) resolvedMime = 'audio/mp3';
-        else if (lowerName.endsWith('.wav')) resolvedMime = 'audio/wav';
-        else if (lowerName.endsWith('.m4a')) resolvedMime = 'audio/m4a';
-        else if (lowerName.endsWith('.ogg')) resolvedMime = 'audio/ogg';
         else if (lowerName.endsWith('.txt')) resolvedMime = 'text/plain';
         else resolvedMime = 'application/pdf';
       }
 
-      const promptText = `Transcreva e extraia todo o texto deste documento ou áudio na íntegra de forma fidedigna, limpa e estruturada, preservando falas, deliberações, valores, prazos e decisões da reunião. Não resuma: forneça o conteúdo completo.`;
+      const promptText = `Transcreva e extraia todo o texto deste documento na íntegra de forma fidedigna, limpa e estruturada, preservando falas, deliberações, valores, prazos e decisões da reunião. Não resuma: forneça o conteúdo completo.`;
 
       const response = await ai.models.generateContent({
         model: 'gemini-2.5-flash',

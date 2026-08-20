@@ -41,11 +41,11 @@ test('Validação de Limites de Upload no Frontend (PROMPT 10)', async (t) => {
     assert.ok(res.error?.includes('Extensão não permitida'));
   });
 
-  await t.test('Aprova arquivos válidos dentro dos limites (.pdf, .docx, .xlsx, .csv, .txt, .md, .mp3, .wav, .m4a)', () => {
+  await t.test('Aprova arquivos válidos dentro dos limites (.pdf, .docx, .xlsx, .csv, .txt, .md)', () => {
     const mockFiles: any[] = [
       { name: 'documento.pdf', size: 2 * 1024 * 1024 },
       { name: 'tabela.xlsx', size: 500 * 1024 },
-      { name: 'audio.m4a', size: 10 * 1024 * 1024 }
+      { name: 'notas.md', size: 10 * 1024 }
     ];
     const res = validateUploadFiles(mockFiles);
     assert.strictEqual(res.valid, true);
